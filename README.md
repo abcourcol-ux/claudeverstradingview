@@ -177,6 +177,31 @@ Global : Prudence sur les métaux. BTC le plus solide des trois.
 | `replay_status` | Position, P&L, date |
 | `replay_stop` | Revenir au temps réel |
 
+### Publication sur les réseaux sociaux (Postiz)
+
+Publiez votre analyse et une capture du graphique sur X, LinkedIn, Telegram, Discord, Bluesky, Threads… via [Postiz](https://github.com/gitroomhq/postiz-app) (cloud ou auto-hébergé).
+
+| Outil | Ce qu'il fait |
+|---|---|
+| `postiz_list_channels` | Liste les comptes connectés dans Postiz |
+| `postiz_create_post` | Publie / programme / met en brouillon un post, avec images locales optionnelles |
+| `postiz_share_chart` | Capture le graphique **et** le publie avec votre texte en une étape |
+
+Configuration : créez une clé API dans Postiz (*Settings → Public API*) puis ajoutez-la au serveur MCP :
+
+```json
+"claudeverstradingview": {
+  "command": "node",
+  "args": ["/Users/VOTRE_USERNAME/claudeverstradingview/src/server.js"],
+  "env": {
+    "POSTIZ_API_KEY": "votre-clé",
+    "POSTIZ_URL": "https://api.postiz.com"
+  }
+}
+```
+
+`POSTIZ_URL` est optionnel (défaut : `https://api.postiz.com`) ; en auto-hébergé, mettez l'URL de votre backend Postiz. Exemple : `"Fais le brief matinal puis programme-le sur X et Telegram pour 8h avec une capture du graphique ES1!"`. `integration_ids` accepte l'id, l'identifiant (`x`, `telegram`…) ou le nom du compte ; par défaut tous les comptes actifs. `type: "draft"` permet de relire dans Postiz avant publication.
+
 ### Autres
 
 | Outil | Ce qu'il fait |
@@ -199,6 +224,8 @@ claudeverstradingview quote                        # prix actuel
 claudeverstradingview symbol BTCUSD                # changer de symbole
 claudeverstradingview screenshot -r chart          # capturer le graphique
 claudeverstradingview pane layout 2x2              # grille 4 graphiques
+claudeverstradingview postiz channels              # comptes Postiz connectés
+claudeverstradingview postiz share -c "ES1! long" -t draft  # capture + brouillon Postiz
 ```
 
 Aide complète : `claudeverstradingview --help`

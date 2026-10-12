@@ -73,6 +73,14 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `alert_list` → view active alerts
 - `alert_delete` → remove alerts
 
+### "Share my analysis on social media" (Postiz)
+Needs `POSTIZ_API_KEY` (and optional `POSTIZ_URL` for self-hosted) in the MCP server env.
+1. `postiz_list_channels` → connected accounts (X, LinkedIn, Telegram, Discord…)
+2. `postiz_share_chart` with `content` + optional `integration_ids` → screenshot the chart and post it in one step
+3. `postiz_create_post` → text-only post or attach existing images (`image_paths`)
+- `type`: `"now"` (default), `"schedule"` (with ISO `date`), `"draft"` (review in Postiz first)
+- **Always show the user the final text and target channels and get explicit confirmation before publishing with `type: "now"`.**
+
 ### "Navigate the UI"
 - `ui_open_panel` → open/close pine-editor, strategy-tester, watchlist, alerts, trading
 - `ui_click` → click buttons by aria-label, text, or data-name
