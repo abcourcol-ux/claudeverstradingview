@@ -227,7 +227,7 @@ def risk_level(tm, plan):
 
 def head(label, plan, late=False):
     side = "ACHAT" if plan["side"] == "buy" else "VENTE"
-    return ["%s // %s%s" % (label, side, " // TROP TARD" if late else ""),
+    return ["%s%s // %s" % ("TROP TARD // " if late else "", label, side),
             "Entrée : %s" % fmt(plan["entry"]),
             "SL : %s" % fmt(plan["stop"]),
             "Objectif : %s" % fmt(plan["target"])]
