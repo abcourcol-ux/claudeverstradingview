@@ -4,3 +4,7 @@ scripts/current.pine
 temp_*
 *.log
 discovery-log.json
+
+# day-trader-skill runtime files (keep trader/config.json)
+trader/*
+!trader/config.json
