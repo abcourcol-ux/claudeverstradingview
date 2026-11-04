@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""Telegram alerts for day-trader-skill opening-range signals, BUY and SELL.
+"""Telegram alerts for opening-range breakouts, BUY and SELL, in YOUR trading windows.
 
-Every --every seconds during the US session it reads today's 5-minute bars
-(Yahoo, through trader-entry's own code) for each symbol and looks for the first
-5-minute close above the 15-minute opening range (ACHAT) or below it (VENTE).
-The buy rule is trader-entry's. The sell rule is its mirror image, done here,
-because the day-trader-skill v2 tools plan longs only.
+Each symbol has one or more trading windows in Andorra time (Europe/Andorra, same
+clock as Paris). In every window the first 15 minutes make the range; after that,
+the first 5-minute close above the range high is ACHAT, below the range low is
+VENTE (the opening-range rule of day-trader-skill's trader-entry, applied to your
+window instead of the 9:30 New York open, both sides). Default windows:
+
+    XAUUSD (GC=F)    00:30-02:30 and 14:00-22:00
+    BTCUSD (BTC-USD) 14:00-22:00
 
 On a signal it sends one message:
 
-    BTCUSD // ACHAT
+    XAUUSD // VENTE
     Entrée : ...   SL : ... (range midpoint)   Objectif : ... (2R)
-    Risque : Bas / Moyen / Risqué / Très risqué   (from trader-timemachine)
+    Risque : Bas / Moyen / Risqué / Très risqué
     Commentaire : ...
 
-and later ONE "TROP TARD" message once taking it would no longer be the
-planned trade (price 0.5R past the entry, back at the stop, at the target, or
-10 minutes after the signal). Times are Andorra time (Europe/Andorra). It
-never places an order. Not financial advice.
+then at most ONE "TROP TARD" message once taking it would no longer be the
+planned trade (price 0.5R past the entry, back at the stop, at the target, or 10
+minutes after the signal). One signal per symbol and window. The risk level comes
+from replaying the same rule in the same window over the last 60 days of
+5-minute bars. It never places an order. Not financial advice.
 
-Standard library only. Token and chat id come from environment variables:
+Standard library only: runs on Windows, Mac, Linux and Android (Termux).
+Token and chat id come from environment variables:
     TELEGRAM_BOT_TOKEN   the token BotFather gave you
     TELEGRAM_CHAT_ID     your chat id (run the chat-id command)
 
@@ -27,10 +32,11 @@ Usage:
     python scripts/trader_signal_telegram.py test
     python scripts/trader_signal_telegram.py chat-id
     python scripts/trader_signal_telegram.py run
+    python scripts/trader_signal_telegram.py run --symbols "XAUUSD:GC=F@00:30-02:30,14:00-22:00"
     python scripts/trader_signal_telegram.py run --once --dry-run
 
-Symbols are LABEL:YAHOO pairs (default XAUUSD:GC=F BTCUSD:BTC-USD). GC=F is the
-COMEX gold future, not spot XAUUSD: its levels differ from your broker's.
+Symbols are LABEL:YAHOO@WINDOWS. GC=F is the COMEX gold future, not spot XAUUSD:
+its levels are a few dollars away from your broker's.
 """
 import argparse
 import datetime
@@ -38,22 +44,20 @@ import importlib.util
 import json
 import math
 import os
-import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILLS = os.path.join(REPO, ".claude", "skills")
-ENTRY = os.path.join(SKILLS, "trader-entry", "entry.py")
-TM = os.path.join(SKILLS, "trader-timemachine", "timemachine.py")
-DEFAULT_SYMBOLS = ["XAUUSD:GC=F", "BTCUSD:BTC-USD"]
-FLAT_BY = (15, 55)          # New York
-OR_BARS = 3                 # 15-minute range on 5-minute bars
+ENTRY = os.path.join(REPO, ".claude", "skills", "trader-entry", "entry.py")
+DEFAULT_SYMBOLS = ["XAUUSD:GC=F@00:30-02:30,14:00-22:00", "BTCUSD:BTC-USD@14:00-22:00"]
+BAR = datetime.timedelta(minutes=5)
+FLAT_BEFORE_END = datetime.timedelta(minutes=5)
 
 
 def _load_entry():
+    """trader-entry's Yahoo client and chart parser (it keeps the request polite)."""
     spec = importlib.util.spec_from_file_location("trader_entry", ENTRY)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -63,7 +67,7 @@ def _load_entry():
 E = _load_entry()
 
 
-# ---------------------------------------------------------------- time
+# ---------------------------------------------------------------- time (Andorra)
 
 def _last_sunday(y, m):
     d = datetime.datetime(y + (m == 12), m % 12 + 1, 1) - datetime.timedelta(days=1)
@@ -71,19 +75,70 @@ def _last_sunday(y, m):
 
 
 def local_offset(utc):
-    """UTC -> Andorra (same as Paris): EU summer time from the last Sunday of March to the
+    """Hours Andorra is ahead of UTC: EU summer time from the last Sunday of March to the
     last Sunday of October, 01:00 UTC. Written out because Windows Python has no tz database."""
     y = utc.year
     dst = _last_sunday(y, 3) + datetime.timedelta(hours=1) <= utc < _last_sunday(y, 10) + datetime.timedelta(hours=1)
     return 2 if dst else 1
 
 
-def hm_local(utc):
-    return (utc + datetime.timedelta(hours=local_offset(utc))).strftime("%H:%M")
+def to_local(utc):
+    return utc + datetime.timedelta(hours=local_offset(utc))
 
 
-def hm_local_ny(ny):
-    return hm_local(E.eastern_to_utc(ny))
+def local_to_utc(local):
+    return local - datetime.timedelta(hours=local_offset(local - datetime.timedelta(hours=1)))
+
+
+def hm(dt):
+    return dt.strftime("%H:%M")
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
+def parse_now(text):
+    """--now "2026-11-04 15:10" is Andorra time."""
+    return local_to_utc(datetime.datetime.strptime(text.strip().replace("T", " "), "%Y-%m-%d %H:%M"))
+
+
+# ---------------------------------------------------------------- symbols and windows
+
+def _hhmm(text):
+    h, _, m = text.strip().partition(":")
+    return datetime.time(int(h), int(m or 0))
+
+
+def parse_symbol(spec):
+    """'XAUUSD:GC=F@00:30-02:30,14:00-22:00' -> (label, yahoo, [(start, end), ...])."""
+    name, _, wins = spec.partition("@")
+    label, _, ysym = name.partition(":")
+    label, ysym = label.strip().upper(), (ysym or label).strip()
+    windows = []
+    for w in (wins or "14:00-22:00").split(","):
+        a, _, b = w.partition("-")
+        try:
+            s, e = _hhmm(a), _hhmm(b)
+        except ValueError:
+            sys.exit("bad window %r in %r: use HH:MM-HH:MM" % (w, spec))
+        if not s < e:
+            sys.exit("window %r in %r must end after it starts, on the same day" % (w, spec))
+        windows.append((s, e))
+    return label, ysym, windows
+
+
+def window_times(day, w, a):
+    """Local datetimes of one window on one local day."""
+    start = datetime.datetime.combine(day, w[0])
+    end = datetime.datetime.combine(day, w[1])
+    or_end = start + datetime.timedelta(minutes=a.or_minutes)
+    cutoff = max(or_end + BAR, end - datetime.timedelta(minutes=a.entry_cutoff))
+    return {"start": start, "or_end": or_end, "cutoff": cutoff, "flat": end - FLAT_BEFORE_END, "end": end}
+
+
+def trading_day(day, a):
+    return a.weekends or day.weekday() < 5
 
 
 # ---------------------------------------------------------------- telegram
@@ -114,40 +169,65 @@ def send(text, dry_run):
     print("sent to Telegram", flush=True)
 
 
-# ---------------------------------------------------------------- signal
+# ---------------------------------------------------------------- data
 
 def fmt(x):
     return "{:,.2f}".format(x).replace(",", " ")
 
 
-def read_chart(label, ysym, offline):
-    if offline:
-        with open(os.path.join(offline, "%s.json" % label), encoding="utf-8") as fh:
-            return fh.read()
-    return E.yahoo_get(E.chart_path(ysym, "1d", "5m"))
+def load_bars(label, ysym, rng, a):
+    """Yahoo 5-minute bars as dicts with local start/end datetimes, oldest first."""
+    if a.offline:
+        with open(os.path.join(a.offline, "%s.json" % label), encoding="utf-8") as fh:
+            text = fh.read()
+    else:
+        text = E.yahoo_get(E.chart_path(ysym, rng, "5m"))
+    bars = []
+    for b in E.parse_chart(text, ysym)["bars"]:
+        if b["t"] % 300:
+            continue                       # off-grid tick (the live price), not a bar
+        start = to_local(datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=b["t"]))
+        bars.append(dict(b, start=start, end=start + BAR))
+    return bars
 
 
-def find_signal(res):
-    """trader-entry's evaluate() result -> the first buy or sell trigger, or None."""
-    rng = res.get("opening_range") or {}
-    if not rng.get("complete") or res.get("phase") in ("pre-open", "forming", "closed"):
-        return None
-    day = datetime.date.fromisoformat(res["date"])
-    before = datetime.datetime.combine(day, E.parse_hhmm(res["no_entries_before"], "before"))
-    cutoff = datetime.datetime.combine(day, E.parse_hhmm(res["no_entries_after"], "cutoff"))
-    hi, lo = rng["high"], rng["low"]
-    for b in res.get("_bars") or []:
-        if b["slot"] < OR_BARS or b["end"] < before or b["end"] > cutoff:
+def history_bars(label, ysym, a, state_dir, today):
+    """60 days of 5-minute bars, fetched once a day per symbol."""
+    if a.offline:
+        return load_bars(label, ysym, "60d", a)
+    path = os.path.join(state_dir, "hist-%s.json" % label)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        if doc.get("date") == today:
+            return [dict(b, start=datetime.datetime.fromisoformat(b["start"]),
+                         end=datetime.datetime.fromisoformat(b["end"])) for b in doc["bars"]]
+    except (OSError, ValueError, KeyError):
+        pass
+    bars = load_bars(label, ysym, "60d", a)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"date": today, "bars": [dict(b, start=b["start"].isoformat(), end=b["end"].isoformat())
+                                           for b in bars]}, fh)
+    return bars
+
+
+# ---------------------------------------------------------------- the rule
+
+def find_signal(bars, wt, now_local):
+    """First completed 5-minute close outside the window's opening range, or None.
+    Returns (signal, range) where range is None until it is complete."""
+    rng = [b for b in bars if wt["start"] <= b["start"] < wt["or_end"]]
+    if not rng or now_local < wt["or_end"]:
+        return None, None
+    hi, lo = max(b["h"] for b in rng), min(b["l"] for b in rng)
+    info = {"high": hi, "low": lo, "bars": len(rng)}
+    for b in bars:
+        if b["start"] < wt["or_end"] or b["end"] > wt["cutoff"] or b["end"] > now_local:
             continue
-        if b["c"] > hi:
-            side = "buy"
-        elif b["c"] < lo:
-            side = "sell"
-        else:
-            continue
-        return {"side": side, "entry": round(b["c"], 2), "end": b["end"], "or_high": hi, "or_low": lo,
-                "entry_time": b["end"].strftime("%I:%M %p").lstrip("0")}
-    return None
+        side = "buy" if b["c"] > hi else "sell" if b["c"] < lo else None
+        if side:
+            return {"side": side, "entry": round(b["c"], 2), "end": b["end"], "or_high": hi, "or_low": lo}, info
+    return None, info
 
 
 def make_plan(sig, target_r):
@@ -161,6 +241,63 @@ def make_plan(sig, target_r):
         risk = round(stop - sig["entry"], 2)
         target = round(sig["entry"] - target_r * risk, 2)
     return dict(sig, stop=round(stop, 2), risk=risk, target=target, target_r=target_r)
+
+
+def outcome(plan, bars, flat):
+    """target / stop / neither by the flat time. A bar that touches both counts as the stop."""
+    s = 1 if plan["side"] == "buy" else -1
+    for b in bars:
+        if b["start"] < plan["end"] or b["end"] > flat:
+            continue
+        worst, best = (b["l"], b["h"]) if s == 1 else (b["h"], b["l"])
+        if s * (worst - plan["stop"]) <= 0:
+            return "stop"
+        if s * (best - plan["target"]) >= 0:
+            return "target"
+    return "neither"
+
+
+def replay(bars, w, a, today):
+    """The same rule in the same window on every past day in the bars."""
+    days = sorted({b["start"].date() for b in bars if b["start"].date() < today})
+    res = {"sessions": 0, "signals": 0, "buy": 0, "sell": 0, "target": 0, "stop": 0, "neither": 0}
+    for d in days:
+        if not trading_day(d, a):
+            continue
+        wt = window_times(d, w, a)
+        day_bars = [b for b in bars if wt["start"] <= b["start"] < wt["end"]]
+        if len(day_bars) < (wt["end"] - wt["start"]) / BAR * 0.8:
+            continue                       # market closed or too many gaps
+        res["sessions"] += 1
+        sig, _ = find_signal(day_bars, wt, wt["end"])
+        if not sig:
+            continue
+        plan = make_plan(sig, a.target_r)
+        if plan["risk"] <= 0:
+            continue
+        res["signals"] += 1
+        res[plan["side"]] += 1
+        res[outcome(plan, day_bars, wt["flat"])] += 1
+    return res
+
+
+LEVELS = ["Bas", "Moyen", "Risqué", "Très risqué"]
+
+
+def risk_level(hist, plan):
+    """From the replay: the share of decided trades that hit the target, minus the share
+    needed to break even at this R (33 % at 2R). Fewer than 10 signals is at least Risqué;
+    a stop wider than 1.5 % of the price moves it up one level."""
+    decided = hist["target"] + hist["stop"]
+    if decided == 0:
+        i = 2
+    else:
+        d = hist["target"] / decided - 1.0 / (1.0 + plan["target_r"])
+        i = 0 if d >= 0.05 else 1 if d > -0.05 else 2 if d > -0.15 else 3
+        if hist["signals"] < 10:
+            i = max(i, 2)
+    wide = plan["risk"] / plan["entry"] > 0.015
+    return LEVELS[min(3, i + wide)], wide
 
 
 def late_reason(plan, last, minutes_since, a):
@@ -178,51 +315,6 @@ def late_reason(plan, last, minutes_since, a):
     return None
 
 
-# ---------------------------------------------------------------- risk level (trader-timemachine)
-
-LEVELS = ["Bas", "Moyen", "Risqué", "Très risqué"]
-
-
-def time_machine(label, ysym, plan, a, state_dir):
-    """Run trader-timemachine on the plan. Returns its JSON or raises."""
-    if a.offline:
-        path = os.path.join(a.offline, "%s.json" % label)
-    else:
-        text = E.yahoo_get(E.chart_path(ysym, "60d", "5m"))
-        doc = json.loads(text)
-        doc["chart"]["result"][0]["meta"]["symbol"] = label   # the tool wants a plain ticker
-        path = os.path.join(state_dir, "tm-%s-60d.json" % label)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh)
-    cmd = [sys.executable, "-I", TM, "run", "--symbol", label, "--side", plan["side"],
-           "--date", plan["end"].date().isoformat(), "--entry", str(plan["entry"]), "--stop", str(plan["stop"]),
-           "--target", str(plan["target"]), "--entry-time", plan["entry_time"], "--setup", "orb",
-           "--stop-rule", "or_mid", "--until", "%02d:%02d" % FLAT_BY, "--offline", path, "--json",
-           "--now", (a.now_utc or E.utc_now()).strftime("%Y-%m-%dT%H:%M:%SZ")]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    try:
-        return json.loads(p.stdout)
-    except ValueError:
-        lines = (p.stderr or p.stdout or "no output").strip().splitlines()
-        raise RuntimeError(lines[-1] if lines else "failed")
-
-
-def risk_level(tm, plan):
-    """Bas / Moyen / Risqué / Très risqué, and whether the stop is wide.
-    From the Time Machine: among the replays that hit a side, how often the target came
-    first, minus the share needed to break even at this R (33 % at 2R). A stop wider than
-    1.5 % of the price moves it up one level."""
-    mc = tm["mc"]
-    pt, ps = mc["p_target"], mc["p_stop"]
-    if pt + ps <= 0:
-        i = 2
-    else:
-        d = pt / (pt + ps) - 1.0 / (1.0 + plan["target_r"])
-        i = 0 if d >= 0.05 else 1 if d > -0.05 else 2 if d > -0.15 else 3
-    wide = plan["risk"] / plan["entry"] > 0.015
-    return LEVELS[min(3, i + wide)], wide
-
-
 # ---------------------------------------------------------------- messages
 
 def head(label, plan, late=False):
@@ -233,29 +325,24 @@ def head(label, plan, late=False):
             "Objectif : %s" % fmt(plan["target"])]
 
 
-def signal_message(label, ysym, plan, tm, tm_error, open_ny):
+def signal_message(label, ysym, plan, wt, hist, hist_error):
     side_txt = "haut" if plan["side"] == "buy" else "bas"
     level_px = plan["or_high"] if plan["side"] == "buy" else plan["or_low"]
-    or_end = open_ny + datetime.timedelta(minutes=15)
-    flat = datetime.datetime.combine(open_ny.date(), datetime.time(*FLAT_BY))
     parts = ["Cassure du %s du range %s-%s (%s), clôture 5 min à %s heure d'Andorre (%s)."
-             % (side_txt, hm_local_ny(open_ny), hm_local_ny(or_end), fmt(level_px), hm_local_ny(plan["end"]), ysym),
+             % (side_txt, hm(wt["start"]), hm(wt["or_end"]), fmt(level_px), hm(plan["end"]), ysym),
              "SL au milieu du range, objectif à %gR, risque %s par unité." % (plan["target_r"], fmt(plan["risk"]))]
-    if tm:
-        level, wide = risk_level(tm, plan)
-        mc, h = tm["mc"], tm["history"]
-        parts.append("Time Machine (%d séances) : objectif d'abord %.0f %%, SL d'abord %.0f %%, ni l'un ni l'autre %.0f %% ; "
-                     "historique : %d objectif(s) sur %d signaux."
-                     % (mc.get("pool_sessions", 0), 100 * mc["p_target"], 100 * mc["p_stop"], 100 * mc["p_neither"],
-                        sum(1 for t in h.get("trades", []) if t.get("outcome") == "target"), h.get("triggered", 0)))
+    if hist and hist["signals"]:
+        level, wide = risk_level(hist, plan)
+        parts.append("Historique de cette fenêtre (%d séances, 60 jours) : %d signaux, %d objectif(s), %d SL, %d ni l'un ni l'autre."
+                     % (hist["sessions"], hist["signals"], hist["target"], hist["stop"], hist["neither"]))
+        if hist["signals"] < 10:
+            parts.append("Échantillon petit : peu fiable.")
         if wide:
             parts.append("SL large (plus de 1,5 % du prix).")
     else:
         level = "Risqué"
-        parts.append("Time Machine indisponible (%s) : risque non mesuré." % tm_error)
-    if plan["side"] == "sell":
-        parts.append("Vente : règle miroir, les skills ne testent que l'achat.")
-    parts.append("À plat avant %s. Aucun ordre passé." % hm_local_ny(flat))
+        parts.append("Historique indisponible (%s) : risque non mesuré." % (hist_error or "aucun signal passé"))
+    parts.append("À plat avant %s. Aucun ordre passé." % hm(wt["flat"]))
     return "\n".join(head(label, plan) + ["Risque : %s" % level, "Commentaire : " + " ".join(parts)])
 
 
@@ -266,7 +353,7 @@ def late_message(label, plan, last, reason, alarm_sent):
         if s * (last - plan["stop"]) > 0:
             parts.append("Entrer maintenant à %s risquerait %s par unité au lieu de %s."
                          % (fmt(last), fmt(abs(last - plan["stop"])), fmt(plan["risk"])))
-    parts.append("Signal d'origine à %s heure d'Andorre." % hm_local_ny(plan["end"]))
+    parts.append("Signal d'origine à %s heure d'Andorre." % hm(plan["end"]))
     if not alarm_sent:
         parts.append("Détecté trop tard pour l'alarme d'entrée.")
     parts.append("Ne pas courir après le prix. Aucun ordre passé.")
@@ -291,74 +378,111 @@ def save_state(path, st):
         json.dump(st, fh, indent=2)
 
 
-def check_all(a, symbols):
-    now_utc = a.now_utc or E.utc_now()
-    now_ny = E.to_eastern(now_utc)
+def active_windows(symbols, now_local, a):
+    """(label, ysym, window, times) for every window where a check makes sense now."""
+    day = now_local.date()
+    out = []
+    if not trading_day(day, a):
+        return out
+    for label, ysym, wins in symbols:
+        for w in wins:
+            wt = window_times(day, w, a)
+            if wt["or_end"] <= now_local < wt["flat"]:
+                out.append((label, ysym, w, wt))
+    return out
+
+
+def next_window(symbols, now_local, a):
+    best = None
+    for k in range(8):
+        day = now_local.date() + datetime.timedelta(days=k)
+        if not trading_day(day, a):
+            continue
+        for label, _, wins in symbols:
+            for w in wins:
+                wt = window_times(day, w, a)
+                if wt["flat"] > now_local and (best is None or wt["start"] < best[0]):
+                    best = (wt["start"], label)
+    return best
+
+
+def check(a, symbols, now_utc):
+    now_local = to_local(now_utc)
+    today = now_local.date()
+    stamp = hm(now_local)
     state_dir = os.path.dirname(a.state) or "."
     os.makedirs(state_dir, exist_ok=True)
-    st = load_state(a.state, now_ny.date().isoformat())
-    stamp = hm_local(now_utc)
-    for pair in symbols:
-        label, _, ysym = pair.partition(":")
-        ysym = ysym or label
-        done = st["sent"].setdefault(label, [])
+    st = load_state(a.state, today.isoformat())
+    live = {}
+    for label, ysym, w, wt in active_windows(symbols, now_local, a):
+        key = "%s@%s" % (label, hm(wt["start"]))
+        done = st["sent"].setdefault(key, [])
         if "late" in done:
             continue
         try:
-            res = E.evaluate(E.parse_chart(read_chart(label, ysym, a.offline), ysym), now_utc)
+            if label not in live:
+                live[label] = load_bars(label, ysym, "5d", a)
+            bars = live[label]
         except Exception as e:  # network hiccup, bad data: report and keep going
-            print("%s %s: check failed: %s" % (stamp, label, e), flush=True)
+            print("%s %s: check failed: %s" % (stamp, key, e), flush=True)
             continue
-        sig = find_signal(res)
+        sig, rng = find_signal(bars, wt, now_local)
         if not sig:
-            print("%s %s: %s" % (stamp, label, "waiting" if res.get("status") != "no-data" else res.get("reason")),
-                  flush=True)
+            print("%s %s: %s" % (stamp, key, "waiting (range %s-%s)" % (fmt(rng["low"]), fmt(rng["high"]))
+                                 if rng else "no data for the range"), flush=True)
             continue
         plan = make_plan(sig, a.target_r)
         if plan["risk"] <= 0:
-            print("%s %s: signal with no room for a stop, skipped" % (stamp, label), flush=True)
+            print("%s %s: signal with no room for a stop, skipped" % (stamp, key), flush=True)
             continue
-        print("%s %s: %s signal" % (stamp, label, "ACHAT" if plan["side"] == "buy" else "VENTE"), flush=True)
-        last = (res.get("last") or {}).get("close")
-        minutes = int((now_ny - plan["end"]).total_seconds() // 60)
+        print("%s %s: %s signal" % (stamp, key, "ACHAT" if plan["side"] == "buy" else "VENTE"), flush=True)
+        done_bars = [b for b in bars if b["start"] <= now_local]
+        last = done_bars[-1]["c"] if done_bars else None
+        minutes = int((now_local - plan["end"]).total_seconds() // 60)
         reason = late_reason(plan, last, minutes, a)
         if reason:
             send(late_message(label, plan, last, reason, "entry" in done), a.dry_run)
             done.append("late")
         elif "entry" not in done:
-            tm, err = None, None
+            hist, err = None, None
             try:
-                tm = time_machine(label, ysym, plan, a, state_dir)
-                if "mc" not in tm:
-                    tm, err = None, tm.get("error") or "no result"
+                hist = replay(history_bars(label, ysym, a, state_dir, today.isoformat()), w, a, today)
             except Exception as e:
                 err = str(e)
-            open_ny = datetime.datetime.combine(plan["end"].date(), datetime.time(9, 30))
-            send(signal_message(label, ysym, plan, tm, err, open_ny), a.dry_run)
+            send(signal_message(label, ysym, plan, wt, hist, err), a.dry_run)
             done.append("entry")
         save_state(a.state, st)
 
 
 def cmd_run(a):
-    symbols = a.symbols or DEFAULT_SYMBOLS
-    a.now_utc = E.parse_now(a.now) if a.now else None
+    symbols = [parse_symbol(s) for s in (a.symbols or DEFAULT_SYMBOLS)]
+    fixed = parse_now(a.now) if a.now else None
     if not a.dry_run:
         creds()
+    for label, ysym, wins in symbols:
+        print("%s (%s): %s heure d'Andorre" % (label, ysym, ", ".join("%s-%s" % (hm(datetime.datetime.combine(
+            datetime.date.today(), s)), hm(datetime.datetime.combine(datetime.date.today(), e))) for s, e in wins)),
+            flush=True)
+    idle = None
     while True:
-        now_ny = E.to_eastern(a.now_utc or E.utc_now())
-        in_hours = now_ny.weekday() < 5 and (9, 45) <= (now_ny.hour, now_ny.minute) < FLAT_BY
-        if a.once or in_hours:
-            check_all(a, symbols)
+        now_utc = fixed or utc_now()
+        now_local = to_local(now_utc)
+        if a.once or active_windows(symbols, now_local, a):
+            idle = None
+            check(a, symbols, now_utc)
+        else:
+            nxt = next_window(symbols, now_local, a)
+            msg = "prochaine fenêtre : %s %s" % (nxt[1], nxt[0].strftime("%d/%m %H:%M")) if nxt else "aucune fenêtre"
+            if msg != idle:
+                print("%s %s (signaux possibles 15 min après le début)" % (hm(now_local), msg), flush=True)
+                idle = msg
         if a.once:
-            return
-        if (now_ny.hour, now_ny.minute) >= FLAT_BY and not a.forever:
-            print("%s (15:55 New York): done for today." % hm_local(E.utc_now()), flush=True)
             return
         time.sleep(a.every)
 
 
 def cmd_test(a):
-    send("Test : le bot des signaux day-trader-skill fonctionne. Aucun ordre ne sera jamais passé.", a.dry_run)
+    send("Test : le bot des signaux fonctionne. Aucun ordre ne sera jamais passé.", a.dry_run)
 
 
 def cmd_chat_id(a):
@@ -378,20 +502,25 @@ def cmd_chat_id(a):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="watch the symbols: a signal message, then a too-late message")
-    r.add_argument("--symbols", nargs="*", help="LABEL:YAHOO pairs, default %s" % " ".join(DEFAULT_SYMBOLS))
+    r = sub.add_parser("run", help="watch the symbols in their windows: a signal message, then a too-late message")
+    r.add_argument("--symbols", nargs="*",
+                   help="LABEL:YAHOO@HH:MM-HH:MM[,HH:MM-HH:MM] in Andorra time, default %s" % " ".join(DEFAULT_SYMBOLS))
     r.add_argument("--every", type=int, default=60, help="seconds between checks (default 60)")
+    r.add_argument("--or-minutes", type=int, default=15, help="opening range length in minutes (default 15)")
+    r.add_argument("--entry-cutoff", type=int, default=60,
+                   help="no new signal in the last N minutes of a window (default 60)")
     r.add_argument("--target-r", type=float, default=2.0, help="target in R (default 2)")
     r.add_argument("--late-r", type=float, default=0.5,
                    help="too late once the price is this many R past the entry (default 0.5)")
     r.add_argument("--late-minutes", type=int, default=10,
                    help="too late this many minutes after the signal bar closed (default 10)")
+    r.add_argument("--weekends", action="store_true", help="also watch on Saturday and Sunday (crypto)")
     r.add_argument("--state", default=os.path.join(REPO, "trader", "state", "telegram.json"))
     r.add_argument("--once", action="store_true", help="one pass, then exit")
-    r.add_argument("--forever", action="store_true", help="keep running across days")
+    r.add_argument("--forever", action="store_true", help=argparse.SUPPRESS)  # old flag: it now always runs on
     r.add_argument("--dry-run", action="store_true", help="print the message instead of sending it")
     r.add_argument("--offline", help="folder of saved Yahoo chart JSON named LABEL.json (testing)")
-    r.add_argument("--now", help='pin the New York clock, e.g. "2026-11-04 10:10" (testing)')
+    r.add_argument("--now", help='pin the Andorra clock, e.g. "2026-11-04 15:10" (testing)')
     r.set_defaults(fn=cmd_run)
     t = sub.add_parser("test", help="send a test message")
     t.add_argument("--dry-run", action="store_true")
