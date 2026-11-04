@@ -1,33 +1,42 @@
 #!/usr/bin/env python3
-"""Telegram alerts for day-trader-skill signals.
+"""Telegram alerts for day-trader-skill opening-range signals, BUY and SELL.
 
-Every --every seconds during the US session it runs trader-entry (opening-range
-breakout, 5-minute bars) on each symbol. The first time a symbol triggers on a
-given day it runs trader-exit (stop at the range midpoint, 2R target) and sends
-an ENTRY ALARM (entry, stop, target, risk). Later, once buying would no longer be
-the planned trade (price 0.5R above the entry, back at the stop, at the target, or
-10 minutes after the signal) it sends ONE "too late" message. Times are shown in
-Andorra time (Europe/Andorra, same as Paris). It never places an order.
+Every --every seconds during the US session it reads today's 5-minute bars
+(Yahoo, through trader-entry's own code) for each symbol and looks for the first
+5-minute close above the 15-minute opening range (ACHAT) or below it (VENTE).
+The buy rule is trader-entry's. The sell rule is its mirror image, done here,
+because the day-trader-skill v2 tools plan longs only.
 
-Standard library only. The token and chat id come from environment variables,
-never from the command line or a file in the repo:
+On a signal it sends one message:
 
+    BTCUSD // ACHAT
+    Entrée : ...   SL : ... (range midpoint)   Objectif : ... (2R)
+    Risque : Bas / Moyen / Risqué / Très risqué   (from trader-timemachine)
+    Commentaire : ...
+
+and later ONE "TROP TARD" message once taking it would no longer be the
+planned trade (price 0.5R past the entry, back at the stop, at the target, or
+10 minutes after the signal). Times are Andorra time (Europe/Andorra). It
+never places an order. Not financial advice.
+
+Standard library only. Token and chat id come from environment variables:
     TELEGRAM_BOT_TOKEN   the token BotFather gave you
-    TELEGRAM_CHAT_ID     your chat id (send /start to the bot, then run `chat-id`)
+    TELEGRAM_CHAT_ID     your chat id (run the chat-id command)
 
 Usage:
-    python3 scripts/trader_signal_telegram.py test               # send a test message
-    python3 scripts/trader_signal_telegram.py chat-id            # print the chat ids that wrote to the bot
-    python3 scripts/trader_signal_telegram.py run                # loop until 15:55 New York
-    python3 scripts/trader_signal_telegram.py run --once --dry-run
+    python scripts/trader_signal_telegram.py test
+    python scripts/trader_signal_telegram.py chat-id
+    python scripts/trader_signal_telegram.py run
+    python scripts/trader_signal_telegram.py run --once --dry-run
 
 Symbols are LABEL:YAHOO pairs (default XAUUSD:GC=F BTCUSD:BTC-USD). GC=F is the
-COMEX gold future, not spot XAUUSD: its levels differ from your broker's by a
-few dollars. Not financial advice.
+COMEX gold future, not spot XAUUSD: its levels differ from your broker's.
 """
 import argparse
 import datetime
+import importlib.util
 import json
+import math
 import os
 import subprocess
 import sys
@@ -38,63 +47,46 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(REPO, ".claude", "skills")
 ENTRY = os.path.join(SKILLS, "trader-entry", "entry.py")
-EXIT = os.path.join(SKILLS, "trader-exit", "exit.py")
+TM = os.path.join(SKILLS, "trader-timemachine", "timemachine.py")
 DEFAULT_SYMBOLS = ["XAUUSD:GC=F", "BTCUSD:BTC-USD"]
-STOP_AT = (15, 55)  # New York, matches flat_by
+FLAT_BY = (15, 55)          # New York
+OR_BARS = 3                 # 15-minute range on 5-minute bars
 
 
-def _nth_sunday(y, m, n):
-    d = datetime.datetime(y, m, 1)
-    d += datetime.timedelta(days=(6 - d.weekday()) % 7)
-    return d + datetime.timedelta(weeks=n - 1)
+def _load_entry():
+    spec = importlib.util.spec_from_file_location("trader_entry", ENTRY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
+
+E = _load_entry()
+
+
+# ---------------------------------------------------------------- time
 
 def _last_sunday(y, m):
     d = datetime.datetime(y + (m == 12), m % 12 + 1, 1) - datetime.timedelta(days=1)
     return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
 
 
-def ny_offset(utc):
-    """Hours from UTC to New York (US DST: 2nd Sunday of March to 1st Sunday of November)."""
-    y = utc.year
-    dst = _nth_sunday(y, 3, 2) + datetime.timedelta(hours=7) <= utc < _nth_sunday(y, 11, 1) + datetime.timedelta(hours=6)
-    return -4 if dst else -5
-
-
 def local_offset(utc):
-    """Hours from UTC to Andorra (Europe/Andorra, same as Paris: EU DST, last Sunday of March/October 01:00 UTC).
-    Written out by hand because Windows Python has no time-zone database without the tzdata package."""
+    """UTC -> Andorra (same as Paris): EU summer time from the last Sunday of March to the
+    last Sunday of October, 01:00 UTC. Written out because Windows Python has no tz database."""
     y = utc.year
     dst = _last_sunday(y, 3) + datetime.timedelta(hours=1) <= utc < _last_sunday(y, 10) + datetime.timedelta(hours=1)
     return 2 if dst else 1
 
 
-def utc_now():
-    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-
-
-def ny_now():
-    utc = utc_now()
-    return utc + datetime.timedelta(hours=ny_offset(utc))
-
-
-def to_local(utc):
-    return utc + datetime.timedelta(hours=local_offset(utc))
-
-
-def ny_to_utc(date_iso, clock):
-    """'2026-11-04', '9:50 AM' (New York) -> naive UTC datetime."""
-    t = datetime.datetime.strptime("%s %s" % (date_iso, clock.strip().upper()), "%Y-%m-%d %I:%M %p")
-    for off in (-4, -5):
-        u = t - datetime.timedelta(hours=off)
-        if ny_offset(u) == off:
-            return u
-    return t + datetime.timedelta(hours=5)
-
-
 def hm_local(utc):
-    return to_local(utc).strftime("%H:%M")
+    return (utc + datetime.timedelta(hours=local_offset(utc))).strftime("%H:%M")
 
+
+def hm_local_ny(ny):
+    return hm_local(E.eastern_to_utc(ny))
+
+
+# ---------------------------------------------------------------- telegram
 
 def telegram(method, params, token):
     url = "https://api.telegram.org/bot%s/%s" % (token, method)
@@ -122,77 +114,166 @@ def send(text, dry_run):
     print("sent to Telegram", flush=True)
 
 
-def run_json(cmd):
-    p = subprocess.run([sys.executable, "-I"] + cmd, capture_output=True, text=True, timeout=120)
-    try:  # entry.py exits non-zero for "waiting" but still prints its JSON
-        return json.loads(p.stdout)
-    except ValueError:
-        msg = (p.stderr or p.stdout or "no output").strip().splitlines()
-        raise RuntimeError(msg[-1] if msg else "failed")
-
+# ---------------------------------------------------------------- signal
 
 def fmt(x):
     return "{:,.2f}".format(x).replace(",", " ")
 
 
-def header_lines(entry, plan):
-    t = entry["trigger"]
-    trig_utc = ny_to_utc(entry["date"], t["time"])
-    open_utc = ny_to_utc(entry["date"], "9:30 AM")
-    or_end = open_utc + datetime.timedelta(minutes=entry["opening_range"].get("minutes", 15))
-    hh, mm = (int(x) for x in str(plan.get("flat_by", "15:55")).split(":"))
-    flat_utc = ny_to_utc(entry["date"], datetime.time(hh, mm).strftime("%I:%M %p"))
-    return trig_utc, [
-        "Range %s-%s : %s - %s" % (hm_local(open_utc), hm_local(or_end),
-                                   fmt(entry["opening_range"]["low"]), fmt(entry["opening_range"]["high"])),
-        "Entrée : %s (clôture de %s)" % (fmt(plan["entry"]), hm_local(trig_utc)),
-        "Stop : %s (%s)" % (fmt(plan["stop"]), plan.get("stop_label", "")),
-        "Objectif : %s (%s)" % (fmt(plan["target"]), plan.get("target_label", "")),
-        "Risque : %s par unité, à plat avant %s" % (fmt(plan["risk_per_share"]), hm_local(flat_utc)),
-    ]
+def read_chart(label, ysym, offline):
+    if offline:
+        with open(os.path.join(offline, "%s.json" % label), encoding="utf-8") as fh:
+            return fh.read()
+    return E.yahoo_get(E.chart_path(ysym, "1d", "5m"))
 
 
-def entry_message(label, ysym, entry, plan):
-    trig_utc, lines = header_lines(entry, plan)
-    out = ["ALARME ENTRÉE %s (cassure du range d'ouverture, achat)" % label,
-           "Signal à %s, heure d'Andorre (%s, 5 min, Yahoo)" % (hm_local(trig_utc), ysym)] + lines
-    last = entry.get("last") or {}
-    if last.get("close") is not None:
-        out.append("Dernier prix : %s" % fmt(last["close"]))
-    out += ["Attention : %s" % w for w in plan.get("warnings") or []]
-    out.append("Aucun ordre passé. Pas un conseil financier.")
-    return "\n".join(out)
-
-
-def late_reason(entry, plan, a):
-    """Why buying now is no longer the planned trade, or None."""
-    last = (entry.get("last") or {}).get("close")
-    risk = plan["risk_per_share"]
-    if last is not None and last <= plan["stop"]:
-        return "le prix (%s) est revenu au stop ou en dessous : signal invalidé" % fmt(last)
-    if last is not None and last >= plan["target"]:
-        return "le prix (%s) a déjà atteint l'objectif" % fmt(last)
-    if last is not None and risk > 0 and (last - plan["entry"]) / risk >= a.late_r:
-        return "le prix (%s) est déjà %.2fR au-dessus de l'entrée" % (fmt(last), (last - plan["entry"]) / risk)
-    if entry.get("minutes_since", 0) > a.late_minutes:
-        return "le signal date de %d minutes" % entry["minutes_since"]
+def find_signal(res):
+    """trader-entry's evaluate() result -> the first buy or sell trigger, or None."""
+    rng = res.get("opening_range") or {}
+    if not rng.get("complete") or res.get("phase") in ("pre-open", "forming", "closed"):
+        return None
+    day = datetime.date.fromisoformat(res["date"])
+    before = datetime.datetime.combine(day, E.parse_hhmm(res["no_entries_before"], "before"))
+    cutoff = datetime.datetime.combine(day, E.parse_hhmm(res["no_entries_after"], "cutoff"))
+    hi, lo = rng["high"], rng["low"]
+    for b in res.get("_bars") or []:
+        if b["slot"] < OR_BARS or b["end"] < before or b["end"] > cutoff:
+            continue
+        if b["c"] > hi:
+            side = "buy"
+        elif b["c"] < lo:
+            side = "sell"
+        else:
+            continue
+        return {"side": side, "entry": round(b["c"], 2), "end": b["end"], "or_high": hi, "or_low": lo,
+                "entry_time": b["end"].strftime("%I:%M %p").lstrip("0")}
     return None
 
 
-def late_message(label, entry, plan, reason, alarm_sent):
-    trig_utc, lines = header_lines(entry, plan)
-    last = (entry.get("last") or {}).get("close")
-    out = ["ENTRÉE TROP TARDIVE %s" % label,
-           "Raison : %s." % reason,
-           "Signal d'origine à %s, heure d'Andorre." % hm_local(trig_utc)] + lines
-    if last is not None and last > plan["stop"]:
-        out.append("Acheter maintenant à %s risquerait %s par unité (au lieu de %s) : ce n'est plus le même trade."
-                   % (fmt(last), fmt(last - plan["stop"]), fmt(plan["risk_per_share"])))
-    if not alarm_sent:
-        out.append("(Le signal a été détecté trop tard pour l'alarme d'entrée.)")
-    out.append("Ne pas courir après le prix. Aucun ordre passé.")
-    return "\n".join(out)
+def make_plan(sig, target_r):
+    mid = (sig["or_high"] + sig["or_low"]) / 2
+    if sig["side"] == "buy":
+        stop = math.floor(mid * 100 + 1e-6) / 100
+        risk = round(sig["entry"] - stop, 2)
+        target = round(sig["entry"] + target_r * risk, 2)
+    else:
+        stop = math.ceil(mid * 100 - 1e-6) / 100
+        risk = round(stop - sig["entry"], 2)
+        target = round(sig["entry"] - target_r * risk, 2)
+    return dict(sig, stop=round(stop, 2), risk=risk, target=target, target_r=target_r)
 
+
+def late_reason(plan, last, minutes_since, a):
+    s = 1 if plan["side"] == "buy" else -1
+    if last is not None:
+        if s * (last - plan["stop"]) <= 0:
+            return "le prix (%s) est revenu au stop : signal invalidé" % fmt(last)
+        if s * (last - plan["target"]) >= 0:
+            return "le prix (%s) a déjà atteint l'objectif" % fmt(last)
+        moved = s * (last - plan["entry"]) / plan["risk"]
+        if moved >= a.late_r:
+            return "le prix (%s) est déjà à %.2fR au-delà de l'entrée" % (fmt(last), moved)
+    if minutes_since > a.late_minutes:
+        return "le signal date de %d minutes" % minutes_since
+    return None
+
+
+# ---------------------------------------------------------------- risk level (trader-timemachine)
+
+LEVELS = ["Bas", "Moyen", "Risqué", "Très risqué"]
+
+
+def time_machine(label, ysym, plan, a, state_dir):
+    """Run trader-timemachine on the plan. Returns its JSON or raises."""
+    if a.offline:
+        path = os.path.join(a.offline, "%s.json" % label)
+    else:
+        text = E.yahoo_get(E.chart_path(ysym, "60d", "5m"))
+        doc = json.loads(text)
+        doc["chart"]["result"][0]["meta"]["symbol"] = label   # the tool wants a plain ticker
+        path = os.path.join(state_dir, "tm-%s-60d.json" % label)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+    cmd = [sys.executable, "-I", TM, "run", "--symbol", label, "--side", plan["side"],
+           "--date", plan["end"].date().isoformat(), "--entry", str(plan["entry"]), "--stop", str(plan["stop"]),
+           "--target", str(plan["target"]), "--entry-time", plan["entry_time"], "--setup", "orb",
+           "--stop-rule", "or_mid", "--until", "%02d:%02d" % FLAT_BY, "--offline", path, "--json",
+           "--now", (a.now_utc or E.utc_now()).strftime("%Y-%m-%dT%H:%M:%SZ")]
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        lines = (p.stderr or p.stdout or "no output").strip().splitlines()
+        raise RuntimeError(lines[-1] if lines else "failed")
+
+
+def risk_level(tm, plan):
+    """Bas / Moyen / Risqué / Très risqué, and whether the stop is wide.
+    From the Time Machine: among the replays that hit a side, how often the target came
+    first, minus the share needed to break even at this R (33 % at 2R). A stop wider than
+    1.5 % of the price moves it up one level."""
+    mc = tm["mc"]
+    pt, ps = mc["p_target"], mc["p_stop"]
+    if pt + ps <= 0:
+        i = 2
+    else:
+        d = pt / (pt + ps) - 1.0 / (1.0 + plan["target_r"])
+        i = 0 if d >= 0.05 else 1 if d > -0.05 else 2 if d > -0.15 else 3
+    wide = plan["risk"] / plan["entry"] > 0.015
+    return LEVELS[min(3, i + wide)], wide
+
+
+# ---------------------------------------------------------------- messages
+
+def head(label, plan, late=False):
+    side = "ACHAT" if plan["side"] == "buy" else "VENTE"
+    return ["%s // %s%s" % (label, side, " // TROP TARD" if late else ""),
+            "Entrée : %s" % fmt(plan["entry"]),
+            "SL : %s" % fmt(plan["stop"]),
+            "Objectif : %s" % fmt(plan["target"])]
+
+
+def signal_message(label, ysym, plan, tm, tm_error, open_ny):
+    side_txt = "haut" if plan["side"] == "buy" else "bas"
+    level_px = plan["or_high"] if plan["side"] == "buy" else plan["or_low"]
+    or_end = open_ny + datetime.timedelta(minutes=15)
+    flat = datetime.datetime.combine(open_ny.date(), datetime.time(*FLAT_BY))
+    parts = ["Cassure du %s du range %s-%s (%s), clôture 5 min à %s heure d'Andorre (%s)."
+             % (side_txt, hm_local_ny(open_ny), hm_local_ny(or_end), fmt(level_px), hm_local_ny(plan["end"]), ysym),
+             "SL au milieu du range, objectif à %gR, risque %s par unité." % (plan["target_r"], fmt(plan["risk"]))]
+    if tm:
+        level, wide = risk_level(tm, plan)
+        mc, h = tm["mc"], tm["history"]
+        parts.append("Time Machine (%d séances) : objectif d'abord %.0f %%, SL d'abord %.0f %%, ni l'un ni l'autre %.0f %% ; "
+                     "historique : %d objectif(s) sur %d signaux."
+                     % (mc.get("pool_sessions", 0), 100 * mc["p_target"], 100 * mc["p_stop"], 100 * mc["p_neither"],
+                        sum(1 for t in h.get("trades", []) if t.get("outcome") == "target"), h.get("triggered", 0)))
+        if wide:
+            parts.append("SL large (plus de 1,5 % du prix).")
+    else:
+        level = "Risqué"
+        parts.append("Time Machine indisponible (%s) : risque non mesuré." % tm_error)
+    if plan["side"] == "sell":
+        parts.append("Vente : règle miroir, les skills ne testent que l'achat.")
+    parts.append("À plat avant %s. Aucun ordre passé." % hm_local_ny(flat))
+    return "\n".join(head(label, plan) + ["Risque : %s" % level, "Commentaire : " + " ".join(parts)])
+
+
+def late_message(label, plan, last, reason, alarm_sent):
+    parts = ["Trop tard : %s." % reason]
+    if last is not None:
+        s = 1 if plan["side"] == "buy" else -1
+        if s * (last - plan["stop"]) > 0:
+            parts.append("Entrer maintenant à %s risquerait %s par unité au lieu de %s."
+                         % (fmt(last), fmt(abs(last - plan["stop"])), fmt(plan["risk"])))
+    parts.append("Signal d'origine à %s heure d'Andorre." % hm_local_ny(plan["end"]))
+    if not alarm_sent:
+        parts.append("Détecté trop tard pour l'alarme d'entrée.")
+    parts.append("Ne pas courir après le prix. Aucun ordre passé.")
+    return "\n".join(head(label, plan, late=True) + ["Risque : Très risqué", "Commentaire : " + " ".join(parts)])
+
+
+# ---------------------------------------------------------------- the loop
 
 def load_state(path, today):
     try:
@@ -200,79 +281,78 @@ def load_state(path, today):
             st = json.load(fh)
     except (OSError, ValueError):
         st = {}
-    if st.get("date") != today:
+    if st.get("date") != today or not isinstance(st.get("sent"), dict):
         return {"date": today, "sent": {}}
-    if isinstance(st.get("sent"), list):  # older format: one message per symbol
-        st["sent"] = {k: ["entry", "late"] for k in st["sent"]}
     return st
 
 
 def save_state(path, st):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(st, fh, indent=2)
 
 
-def check_all(a, symbols, now_ny):
-    today = now_ny.date().isoformat()
-    st = load_state(a.state, today)
-    os.makedirs(os.path.dirname(a.state) or ".", exist_ok=True)
-    stamp = hm_local(utc_now())
+def check_all(a, symbols):
+    now_utc = a.now_utc or E.utc_now()
+    now_ny = E.to_eastern(now_utc)
+    state_dir = os.path.dirname(a.state) or "."
+    os.makedirs(state_dir, exist_ok=True)
+    st = load_state(a.state, now_ny.date().isoformat())
+    stamp = hm_local(now_utc)
     for pair in symbols:
         label, _, ysym = pair.partition(":")
         ysym = ysym or label
         done = st["sent"].setdefault(label, [])
-        if "late" in done or "error" in done:
+        if "late" in done:
             continue
-        entry_path = os.path.join(os.path.dirname(a.state), "entry-%s.json" % label)
-        cmd = [ENTRY, "check", ysym, "--setup", "orb", "--json", "--write", entry_path]
-        if a.offline:
-            cmd += ["--offline", os.path.join(a.offline, "%s.json" % label)]
-        if a.now:
-            cmd += ["--now", a.now]
         try:
-            entry = run_json(cmd)
+            res = E.evaluate(E.parse_chart(read_chart(label, ysym, a.offline), ysym), now_utc)
         except Exception as e:  # network hiccup, bad data: report and keep going
-            print("%s %s: entry check failed: %s" % (stamp, label, e), flush=True)
+            print("%s %s: check failed: %s" % (stamp, label, e), flush=True)
             continue
-        print("%s %s: %s" % (stamp, label, entry.get("status")), flush=True)
-        if entry.get("status") != "triggered":
+        sig = find_signal(res)
+        if not sig:
+            print("%s %s: %s" % (stamp, label, "waiting" if res.get("status") != "no-data" else res.get("reason")),
+                  flush=True)
             continue
-        pcmd = [EXIT, "plan", "--from", entry_path, "--stop", "or-mid", "--target", a.target, "--json"]
-        if a.now:
-            pcmd += ["--now", a.now]
-        try:
-            plan = run_json(pcmd)
-            if "entry" not in plan:
-                raise RuntimeError(plan.get("error") or "no plan")
-        except Exception as e:
-            send("SIGNAL %s déclenché, mais le plan de sortie a été refusé : %s" % (label, e), a.dry_run)
-            done.append("error")
-            save_state(a.state, st)
+        plan = make_plan(sig, a.target_r)
+        if plan["risk"] <= 0:
+            print("%s %s: signal with no room for a stop, skipped" % (stamp, label), flush=True)
             continue
-        reason = late_reason(entry, plan, a)
+        print("%s %s: %s signal" % (stamp, label, "ACHAT" if plan["side"] == "buy" else "VENTE"), flush=True)
+        last = (res.get("last") or {}).get("close")
+        minutes = int((now_ny - plan["end"]).total_seconds() // 60)
+        reason = late_reason(plan, last, minutes, a)
         if reason:
-            send(late_message(label, entry, plan, reason, "entry" in done), a.dry_run)
+            send(late_message(label, plan, last, reason, "entry" in done), a.dry_run)
             done.append("late")
         elif "entry" not in done:
-            send(entry_message(label, ysym, entry, plan), a.dry_run)
+            tm, err = None, None
+            try:
+                tm = time_machine(label, ysym, plan, a, state_dir)
+                if "mc" not in tm:
+                    tm, err = None, tm.get("error") or "no result"
+            except Exception as e:
+                err = str(e)
+            open_ny = datetime.datetime.combine(plan["end"].date(), datetime.time(9, 30))
+            send(signal_message(label, ysym, plan, tm, err, open_ny), a.dry_run)
             done.append("entry")
         save_state(a.state, st)
 
 
 def cmd_run(a):
     symbols = a.symbols or DEFAULT_SYMBOLS
+    a.now_utc = E.parse_now(a.now) if a.now else None
     if not a.dry_run:
         creds()
     while True:
-        now_ny = ny_now()
-        if a.once or now_ny.weekday() < 5:
-            if a.once or (9, 45) <= (now_ny.hour, now_ny.minute) < STOP_AT:
-                check_all(a, symbols, now_ny)
+        now_ny = E.to_eastern(a.now_utc or E.utc_now())
+        in_hours = now_ny.weekday() < 5 and (9, 45) <= (now_ny.hour, now_ny.minute) < FLAT_BY
+        if a.once or in_hours:
+            check_all(a, symbols)
         if a.once:
             return
-        if (now_ny.hour, now_ny.minute) >= STOP_AT and not a.forever:
-            print("%s (15:55 New York): done for today." % hm_local(utc_now()), flush=True)
+        if (now_ny.hour, now_ny.minute) >= FLAT_BY and not a.forever:
+            print("%s (15:55 New York): done for today." % hm_local(E.utc_now()), flush=True)
             return
         time.sleep(a.every)
 
@@ -298,12 +378,12 @@ def cmd_chat_id(a):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="watch the symbols and send an entry alarm, then a too-late message")
+    r = sub.add_parser("run", help="watch the symbols: a signal message, then a too-late message")
     r.add_argument("--symbols", nargs="*", help="LABEL:YAHOO pairs, default %s" % " ".join(DEFAULT_SYMBOLS))
     r.add_argument("--every", type=int, default=60, help="seconds between checks (default 60)")
-    r.add_argument("--target", default="2R", help="trader-exit target (default 2R)")
+    r.add_argument("--target-r", type=float, default=2.0, help="target in R (default 2)")
     r.add_argument("--late-r", type=float, default=0.5,
-                   help="too late once the price is this many R above the entry (default 0.5)")
+                   help="too late once the price is this many R past the entry (default 0.5)")
     r.add_argument("--late-minutes", type=int, default=10,
                    help="too late this many minutes after the signal bar closed (default 10)")
     r.add_argument("--state", default=os.path.join(REPO, "trader", "state", "telegram.json"))
@@ -311,7 +391,7 @@ def main():
     r.add_argument("--forever", action="store_true", help="keep running across days")
     r.add_argument("--dry-run", action="store_true", help="print the message instead of sending it")
     r.add_argument("--offline", help="folder of saved Yahoo chart JSON named LABEL.json (testing)")
-    r.add_argument("--now", help='pin the New York clock for trader-entry, e.g. "2026-11-04 10:10" (testing)')
+    r.add_argument("--now", help='pin the New York clock, e.g. "2026-11-04 10:10" (testing)')
     r.set_defaults(fn=cmd_run)
     t = sub.add_parser("test", help="send a test message")
     t.add_argument("--dry-run", action="store_true")
