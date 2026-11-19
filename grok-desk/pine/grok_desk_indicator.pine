@@ -1,0 +1,131 @@
+// This source code is subject to the terms of the MIT License.
+// Grok Desk — indicateur : reproduit la logique du desk à six bots sur un graphique 5 min.
+//   Scanner     → volume relatif à la même heure + pic de volume de la bougie
+//   Planificateur → entrée / stop (ATR) / objectif (R:R)
+//   Risque      → stop max en %, R:R min, fenêtres horaires, trades/jour
+//   Sceptique   → refuse les achats/ventes trop étendus loin du VWAP
+//   (News et Chef restent côté app : TradingView n'expose pas l'actualité au Pine)
+// Le tableau en haut à droite est lu par l'app (data_get_pine_tables, study_filter "Grok Desk").
+//@version=6
+indicator("Grok Desk", overlay = true, max_lines_count = 50, max_labels_count = 100)
+
+// ── Paramètres (les lignes marquées « @desk » reçoivent les valeurs de la config de l'app) ──
+grpS = "🔎 Scanner"
+rvolDays  = input.int(5, "Jours de référence du volume relatif", minval = 1, maxval = 20, group = grpS)  // @desk RVOL_DAYS
+rvolMin   = input.float(2.0, "Volume relatif minimum", step = 0.1, group = grpS)  // @desk MIN_REL_VOLUME
+spikeMin  = input.float(3.0, "Pic de bougie minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
+grpP = "🎯 Planificateur"
+atrLen    = input.int(14, "Période ATR", group = grpP)
+stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
+rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
+grpR = "🛡️ Risque"
+minRR     = input.float(1.5, "R:R minimum", step = 0.1, group = grpR)  // @desk MIN_RR
+maxStopPc = input.float(3.0, "Stop max (% de l'entrée)", step = 0.1, group = grpR)  // @desk MAX_STOP_PCT
+noFirst   = input.int(15, "Pas d'entrée les N premières minutes", group = grpR)  // @desk NO_ENTRY_FIRST_MIN
+noLast    = input.int(45, "Pas d'entrée les N dernières minutes", group = grpR)  // @desk NO_ENTRY_LAST_MIN
+maxTrades = input.int(5, "Signaux max par jour", group = grpR)  // @desk MAX_TRADES_PER_DAY
+grpK = "😈 Sceptique"
+maxExtAtr = input.float(3.0, "Refuser si prix > N × ATR du VWAP", step = 0.1, group = grpK)  // @desk MAX_EXT_ATR
+allowShort = input.bool(true, "Autoriser les shorts", group = grpK)
+
+// ── Scanner : volume relatif à la même heure ──
+type DayVol
+    array<float> cum
+
+var array<DayVol> days = array.new<DayVol>()
+var DayVol cur = na
+inSess = session.ismarket
+if session.isfirstbar_regular
+    if not na(cur)
+        days.push(cur)
+        if days.size() > rvolDays
+            days.shift()
+    cur := DayVol.new(array.new<float>())
+float rvol = na
+if inSess and not na(cur)
+    prev = cur.cum.size() > 0 ? cur.cum.last() : 0.0
+    cur.cum.push(prev + volume)
+    k = cur.cum.size() - 1
+    float sum = 0.0
+    int n = 0
+    for d in days
+        if d.cum.size() > k
+            sum += d.cum.get(k)
+            n += 1
+    rvol := n > 0 and sum > 0 ? cur.cum.get(k) / (sum / n) : na
+
+spike = volume / ta.sma(volume, 20)[1]
+vwap  = ta.vwap(hlc3)
+atr   = ta.atr(atrLen)
+unusual = (not na(rvol) and rvol >= rvolMin) or spike >= spikeMin
+
+// ── Fenêtres horaires (gère les demi-séances via la bougie journalière) ──
+minSinceOpen = (time - time("1D")) / 60000.0
+minToClose   = (time_close("1D") - time_close) / 60000.0
+timeOk = inSess and minSinceOpen >= noFirst and minToClose >= noLast
+
+var int tradesToday = 0
+if session.isfirstbar_regular
+    tradesToday := 0
+
+// ── Planificateur + Risque + Sceptique ──
+longIdea  = unusual and close > vwap and close > open
+shortIdea = allowShort and unusual and close < vwap and close < open
+dir = longIdea ? 1 : shortIdea ? -1 : 0
+entry  = close
+stop   = entry - dir * stopAtr * atr
+target = entry + dir * rrTarget * stopAtr * atr
+riskPS = math.abs(entry - stop)
+rr     = riskPS > 0 ? math.abs(target - entry) / riskPS : 0.0
+stopPc = riskPS / entry * 100
+extended = math.abs(close - vwap) > maxExtAtr * atr
+riskOk = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades
+signal = riskOk and not extended
+signalLong  = signal and dir == 1
+signalShort = signal and dir == -1
+if signal
+    tradesToday += 1
+
+// État textuel lu par l'app
+string verdict = dir == 0 ? (unusual ? "Volume sans direction" : "Calme") : not timeOk ? "Hors fenêtre" : rr < minRR ? "Refus Risque : R:R" : stopPc > maxStopPc ? "Refus Risque : stop" : tradesToday >= maxTrades and not signal ? "Refus Risque : quota" : extended ? "Refus Sceptique : étendu" : dir == 1 ? "LONG" : "SHORT"
+
+// ── Dessins ──
+plot(vwap, "VWAP", color.new(color.orange, 0), 2)
+plotshape(signalLong,  "Long",  shape.triangleup,   location.belowbar, color.new(color.lime, 0), size = size.small, text = "GD")
+plotshape(signalShort, "Short", shape.triangledown, location.abovebar, color.new(color.red, 0),  size = size.small, text = "GD")
+barcolor(unusual and not signal ? color.new(color.yellow, 0) : na, title = "Volume inhabituel")
+
+var line lE = na
+var line lS = na
+var line lT = na
+if signal
+    line.delete(lE)
+    line.delete(lS)
+    line.delete(lT)
+    lE := line.new(bar_index, entry,  bar_index + 12, entry,  color = color.blue, width = 2)
+    lS := line.new(bar_index, stop,   bar_index + 12, stop,   color = color.red,  width = 2, style = line.style_dashed)
+    lT := line.new(bar_index, target, bar_index + 12, target, color = color.lime, width = 2, style = line.style_dashed)
+    label.new(bar_index, dir == 1 ? low : high, str.format("GD {0}\nE {1}  S {2}  T {3}\nRVOL {4}  R:R {5}", dir == 1 ? "LONG" : "SHORT", str.tostring(entry, format.mintick), str.tostring(stop, format.mintick), str.tostring(target, format.mintick), str.tostring(rvol, "#.##"), str.tostring(rr, "#.##")), style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(color.green, 20) : color.new(color.red, 20), textcolor = color.white, size = size.small)
+
+// ── Tableau (format "Clé | Valeur", parsé par l'app) ──
+var table t = table.new(position.top_right, 2, 10, bgcolor = color.new(color.black, 20), border_width = 1)
+cell(r, k, v, c) =>
+    table.cell(t, 0, r, k, text_color = color.silver, text_size = size.small)
+    table.cell(t, 1, r, v, text_color = c, text_size = size.small)
+if barstate.islast
+    cell(0, "Signal", verdict, verdict == "LONG" ? color.lime : verdict == "SHORT" ? color.red : color.yellow)
+    cell(1, "RVOL", str.tostring(rvol, "#.##"), rvol >= rvolMin ? color.lime : color.white)
+    cell(2, "Spike", str.tostring(spike, "#.##"), spike >= spikeMin ? color.lime : color.white)
+    cell(3, "VWAP", str.tostring(vwap, format.mintick), color.orange)
+    cell(4, "vs VWAP ATR", str.tostring((close - vwap) / atr, "#.##"), extended ? color.red : color.white)
+    cell(5, "ATR", str.tostring(atr, format.mintick), color.white)
+    cell(6, "Entry", dir != 0 ? str.tostring(entry, format.mintick) : "-", color.blue)
+    cell(7, "Stop", dir != 0 ? str.tostring(stop, format.mintick) : "-", color.red)
+    cell(8, "Target", dir != 0 ? str.tostring(target, format.mintick) : "-", color.lime)
+    cell(9, "Trades", str.tostring(tradesToday) + "/" + str.tostring(maxTrades), color.white)
+
+// ── Alertes (webhook possible vers l'app ou Telegram) ──
+alertcondition(signalLong,  "Grok Desk LONG",  "Grok Desk LONG {{ticker}} @ {{close}}")
+alertcondition(signalShort, "Grok Desk SHORT", "Grok Desk SHORT {{ticker}} @ {{close}}")
+if signal
+    alert('{"bot":"grok-desk","ticker":"' + syminfo.ticker + '","dir":"' + (dir == 1 ? "long" : "short") + '","entry":' + str.tostring(entry) + ',"stop":' + str.tostring(stop) + ',"target":' + str.tostring(target) + ',"rvol":' + str.tostring(nz(rvol), "#.##") + '}', alert.freq_once_per_bar_close)

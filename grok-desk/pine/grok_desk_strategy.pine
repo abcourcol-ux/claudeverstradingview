@@ -1,0 +1,109 @@
+// This source code is subject to the terms of the MIT License.
+// Grok Desk — stratégie de backtest : mêmes règles que l'indicateur et que les bots de l'app,
+// exécutées dans le Strategy Tester. Graphique 5 min, séance régulière (sans pré/post-marché).
+//   Entrée au marché à l'ouverture de la bougie suivant le signal ; stop et objectif fixés au signal.
+//   Taille = risque % du capital / distance du stop, plafonnée par la taille max de position.
+//   Tout est fermé N minutes avant la clôture ; coupe-circuit sur perte journalière.
+//@version=6
+strategy("Grok Desk Strategy", overlay = true, initial_capital = 25000, currency = currency.USD, pyramiding = 0, commission_type = strategy.commission.cash_per_order, commission_value = 1.0, slippage = 2, margin_long = 100, margin_short = 100)  // @desk CAPITAL
+
+grpS = "🔎 Scanner"
+rvolDays  = input.int(5, "Jours de référence du volume relatif", minval = 1, maxval = 20, group = grpS)  // @desk RVOL_DAYS
+rvolMin   = input.float(2.0, "Volume relatif minimum", step = 0.1, group = grpS)  // @desk MIN_REL_VOLUME
+spikeMin  = input.float(3.0, "Pic de bougie minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
+grpP = "🎯 Planificateur"
+atrLen    = input.int(14, "Période ATR", group = grpP)
+stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
+rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
+exitVwap  = input.bool(false, "Sortir si le prix recroise le VWAP", group = grpP)
+grpR = "🛡️ Risque"
+riskPct   = input.float(0.5, "Risque par trade (% du capital)", step = 0.1, group = grpR)  // @desk RISK_PER_TRADE_PCT
+maxPosPct = input.float(25.0, "Taille max de position (% du capital)", step = 1, group = grpR)  // @desk MAX_POSITION_PCT
+minRR     = input.float(1.5, "R:R minimum", step = 0.1, group = grpR)  // @desk MIN_RR
+maxStopPc = input.float(3.0, "Stop max (% de l'entrée)", step = 0.1, group = grpR)  // @desk MAX_STOP_PCT
+noFirst   = input.int(15, "Pas d'entrée les N premières minutes", group = grpR)  // @desk NO_ENTRY_FIRST_MIN
+noLast    = input.int(45, "Pas d'entrée les N dernières minutes", group = grpR)  // @desk NO_ENTRY_LAST_MIN
+flatMin   = input.int(5, "Tout fermer N minutes avant la clôture", group = grpR)  // @desk FLATTEN_MIN
+maxTrades = input.int(5, "Trades max par jour", group = grpR)  // @desk MAX_TRADES_PER_DAY
+dayLossPc = input.float(2.0, "Perte journalière max (% du capital)", step = 0.1, group = grpR)  // @desk DAILY_LOSS_LIMIT_PCT
+grpK = "😈 Sceptique"
+maxExtAtr = input.float(3.0, "Refuser si prix > N × ATR du VWAP", step = 0.1, group = grpK)  // @desk MAX_EXT_ATR
+allowShort = input.bool(true, "Autoriser les shorts", group = grpK)
+grpD = "📅 Période de test"
+useFrom   = input.bool(false, "Limiter la période", group = grpD)
+fromDate  = input.time(timestamp("2025-01-01"), "Depuis", group = grpD)
+
+strategy.risk.max_intraday_loss(dayLossPc, strategy.percent_of_equity)
+
+// ── Scanner : volume relatif à la même heure ──
+type DayVol
+    array<float> cum
+
+var array<DayVol> days = array.new<DayVol>()
+var DayVol cur = na
+inSess = session.ismarket
+if session.isfirstbar_regular
+    if not na(cur)
+        days.push(cur)
+        if days.size() > rvolDays
+            days.shift()
+    cur := DayVol.new(array.new<float>())
+float rvol = na
+if inSess and not na(cur)
+    prev = cur.cum.size() > 0 ? cur.cum.last() : 0.0
+    cur.cum.push(prev + volume)
+    k = cur.cum.size() - 1
+    float sum = 0.0
+    int n = 0
+    for d in days
+        if d.cum.size() > k
+            sum += d.cum.get(k)
+            n += 1
+    rvol := n > 0 and sum > 0 ? cur.cum.get(k) / (sum / n) : na
+
+spike = volume / ta.sma(volume, 20)[1]
+vwap  = ta.vwap(hlc3)
+atr   = ta.atr(atrLen)
+unusual = (not na(rvol) and rvol >= rvolMin) or spike >= spikeMin
+
+minSinceOpen = (time - time("1D")) / 60000.0
+minToClose   = (time_close("1D") - time_close) / 60000.0
+timeOk = inSess and minSinceOpen >= noFirst and minToClose >= noLast and (not useFrom or time >= fromDate)
+
+var int tradesToday = 0
+if session.isfirstbar_regular
+    tradesToday := 0
+
+// ── Planificateur + Risque + Sceptique ──
+dir = unusual and close > vwap and close > open ? 1 : allowShort and unusual and close < vwap and close < open ? -1 : 0
+entryPx = close
+stopPx  = entryPx - dir * stopAtr * atr
+tgtPx   = entryPx + dir * rrTarget * stopAtr * atr
+riskPS  = math.abs(entryPx - stopPx)
+rr      = riskPS > 0 ? math.abs(tgtPx - entryPx) / riskPS : 0.0
+stopPc  = riskPS / entryPx * 100
+extended = math.abs(close - vwap) > maxExtAtr * atr
+qtyRisk = riskPS > 0 ? math.floor(strategy.equity * riskPct / 100 / riskPS) : 0
+qtyCap  = math.floor(strategy.equity * maxPosPct / 100 / entryPx)
+qty     = math.min(qtyRisk, qtyCap)
+signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= 1 and strategy.position_size == 0
+
+if signal
+    tradesToday += 1
+    if dir == 1
+        strategy.entry("GD Long", strategy.long, qty = qty)
+        strategy.exit("GD Long X", "GD Long", stop = stopPx, limit = tgtPx)
+    else
+        strategy.entry("GD Short", strategy.short, qty = qty)
+        strategy.exit("GD Short X", "GD Short", stop = stopPx, limit = tgtPx)
+
+if exitVwap and strategy.position_size > 0 and close < vwap
+    strategy.close("GD Long", comment = "VWAP")
+if exitVwap and strategy.position_size < 0 and close > vwap
+    strategy.close("GD Short", comment = "VWAP")
+if inSess and minToClose <= flatMin
+    strategy.close_all(comment = "Clôture")
+
+plot(vwap, "VWAP", color.new(color.orange, 0), 2)
+plotshape(signal and dir == 1,  "Long",  shape.triangleup,   location.belowbar, color.new(color.lime, 0), size = size.small)
+plotshape(signal and dir == -1, "Short", shape.triangledown, location.abovebar, color.new(color.red, 0),  size = size.small)
