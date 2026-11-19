@@ -70,6 +70,7 @@ export function loadConfig(env = process.env, flags = {}) {
     // paper = journal fictif ; mt5 = ordres envoyés au terminal MetaTrader 5 (Axi), démo sauf autorisation explicite
     broker: (env.DESK_BROKER || 'paper').toLowerCase(),
     mt5: { python: env.MT5_PYTHON, symbolMap: env.MT5_SYMBOLS || '' },
+    dashboard: { url: env.DESK_SYNC_URL || '', secret: env.DESK_SYNC_SECRET || '' },
     extraHolidays: list(env.DESK_EXTRA_HOLIDAYS, []),
     journalPath: env.DESK_JOURNAL_PATH || fileURLToPath(new URL('../data/journal.json', import.meta.url)),
   };

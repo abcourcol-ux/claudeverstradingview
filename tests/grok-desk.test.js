@@ -169,3 +169,23 @@ describe('grok-desk — GO exécuté par le courtier', () => {
     assert.equal(r.position, undefined);
   });
 });
+
+describe('grok-desk — tableau de bord mobile', async () => {
+  const { createDashboard } = await import('../grok-desk/src/dashboard.js');
+  it('inactif sans URL/secret', () => assert.equal(createDashboard({}), null));
+  it('envoie le secret, nettoie le HTML, lit les commandes, ne plante jamais', async () => {
+    const calls = [];
+    let fail = false;
+    const d = createDashboard({ url: 'https://x/desk-sync', secret: 'k', log: () => {}, fetchFn: async (u, o) => {
+      calls.push({ h: o.headers['x-desk-secret'], body: JSON.parse(o.body) });
+      if (fail) throw new Error('réseau');
+      return { ok: true, json: async () => ({ commands: [{ id: 1, command: 'pause' }] }) };
+    } });
+    await d.message('chef', '<b>GO</b> &amp; on y va');
+    assert.equal(calls[0].h, 'k');
+    assert.deepEqual(calls[0].body, { action: 'message', data: { bot: 'chef', text: 'GO & on y va' } });
+    assert.deepEqual(await d.commands(), [{ id: 1, command: 'pause' }]);
+    fail = true;
+    assert.deepEqual(await d.commands(), []);
+  });
+});

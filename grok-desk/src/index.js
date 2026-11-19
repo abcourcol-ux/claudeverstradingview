@@ -10,6 +10,7 @@ import { createJournal } from './journal.js';
 import { mockProvider, tradingviewProvider, yahooProvider } from './providers.js';
 import { runRound, askChef } from './debate.js';
 import { createMt5Broker } from './broker-mt5.js';
+import { createDashboard } from './dashboard.js';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -21,6 +22,12 @@ const source = opt('source') || process.env.DESK_SOURCE || 'yahoo';
 
 const llm = cfg.mock ? createMockGrok() : createGrok(cfg.xai);
 const tg = createTelegram(cfg.telegram, { dryRun: cfg.dryRun });
+// Tableau de bord mobile : chaque message des bots est aussi publié dans l'app Lovable.
+const dash = createDashboard(cfg.dashboard);
+if (dash) {
+  const rawSend = tg.send;
+  tg.send = async (bot, text, opts) => { dash.message(bot, text); return rawSend(bot, text, opts); };
+}
 const journal = createJournal(cfg.journalPath, { persist: !cfg.mock });
 const provider = cfg.mock ? mockProvider(cfg.watchlist)
   : source === 'tradingview' ? await tradingviewProvider({ timeframe: process.env.TV_TIMEFRAME || '5' })
@@ -50,6 +57,7 @@ async function round(status, focusTicker) {
   try {
     if (broker) cfg.risk.capital = (await broker.account()).equity;
     const r = await runRound({ cfg, llm, tg, provider, journal, status, focusTicker, broker });
+    await dash?.round(r, status);
     state.lastRound = Date.now();
     if (r.quiet && Date.now() - state.lastQuiet > 60 * 60_000) {
       state.lastQuiet = Date.now();
@@ -116,9 +124,36 @@ async function tick() {
     }
   }
   state.wasOpen = status.open;
-  if (!status.open || state.paused) return;
-  await monitor(status);
-  if (Date.now() - state.lastRound >= cfg.cycleMinutes * 60_000) await round(status);
+  if (status.open && !state.paused) {
+    await monitor(status);
+    if (Date.now() - state.lastRound >= cfg.cycleMinutes * 60_000) await round(status);
+  }
+  await publishDashboard(status);
+}
+
+async function publishDashboard(status) {
+  if (!dash) return;
+  const acc = broker ? await broker.account().catch(() => null) : null;
+  await dash.positions([...journal.state.closed, ...journal.active()]);
+  await dash.status({
+    market_open: status.open, market_reason: status.reason, ny_time: status.hhmm, minutes_to_close: status.minutesToClose,
+    next_open: status.open ? null : nextOpen(new Date(), cfg.extraHolidays)?.toISOString(),
+    paused: state.paused, busy: state.busy, execution: broker ? `MT5 ${broker.label}` : (cfg.mock ? 'mock' : 'papier'),
+    account_login: acc?.login ?? null, equity: acc?.equity ?? cfg.risk.capital, currency: acc?.currency ?? 'USD',
+    day_pnl: journal.realizedPnl, trades_today: journal.tradesToday, max_trades: cfg.risk.maxTradesPerDay,
+    watchlist: cfg.watchlist, cycle_minutes: cfg.cycleMinutes, model: cfg.mock ? 'mock' : cfg.xai.model,
+    last_round_at: state.lastRound ? new Date(state.lastRound).toISOString() : null,
+  });
+}
+
+// Commandes envoyées depuis le téléphone (boutons de l'app) : mêmes effets que les commandes Telegram.
+async function pollDashboardCommands() {
+  if (!dash) return;
+  for (const c of await dash.commands()) {
+    let result = 'ok';
+    try { await onCommand(String(c.command).toLowerCase(), c.arg || ''); } catch (e) { result = e.message; }
+    await dash.commandDone(c.id, result);
+  }
 }
 
 async function onCommand(cmd, arg) {
@@ -143,6 +178,7 @@ async function onCommand(cmd, arg) {
   }
 }
 
+if (dash) console.log('Tableau de bord mobile : actif');
 console.log(`Grok Desk — source ${cfg.mock ? 'mock' : source}, modèle ${cfg.mock ? 'mock' : cfg.xai.model}, Telegram ${tg.live ? 'actif' : 'désactivé (console)'}`);
 
 if (flag('once')) {
@@ -151,9 +187,12 @@ if (flag('once')) {
   const status = s.open ? s : { ...s, open: true, hhmm: 'test', minutesSinceOpen: 120, minutesToClose: 180 };
   journal.rollDay(status.date);
   await round(status, opt('focus')?.toUpperCase() || null);
+  await publishDashboard(status);
+  if (dash) await new Promise((r) => setTimeout(r, 2000)); // laisse partir les derniers messages
   process.exit(0);
 }
 
 tg.poll(onCommand);
 await tick();
 setInterval(() => tick().catch((e) => console.error('[tick]', e)), 60_000);
+if (dash) setInterval(() => pollDashboardCommands().catch((e) => console.error('[dashboard cmd]', e)), 10_000);

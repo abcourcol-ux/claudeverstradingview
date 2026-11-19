@@ -76,6 +76,12 @@ npm run desk:tv -- export
 
 Limites : la profondeur d'historique en 5 min dépend de ton abonnement TradingView (Deep Backtesting sur les plans payants). News et Chef ne sont pas dans le backtest, qui mesure donc l'avantage « brut » des règles Scanner/Planificateur/Risque/Sceptique.
 
+## Sur ton téléphone (app Lovable)
+
+Le desk publie en direct tout ce qui se passe : débat des bots, décisions, positions, P&L, état du marché et du compte. Une app Lovable l'affiche sur ton téléphone et permet de le piloter (pause, reprise, scanner un titre, poser une question au Chef). L'app ne passe aucun ordre elle-même.
+
+Tout est dans `grok-desk/lovable/PROMPT.md` : un seul prompt à coller dans Lovable (schéma de base, fonction `desk-sync`, interface), puis deux lignes à ajouter au `.env` (`DESK_SYNC_URL`, `DESK_SYNC_SECRET`). Seul ton e-mail peut lire les données. Si l'app est injoignable, le desk continue de tourner normalement.
+
 ## Exécution sur Axi (MetaTrader 5) — démo d'abord
 
 Par défaut le desk est en papier. Avec `DESK_BROKER=mt5`, chaque GO du Chef devient un **ordre au marché** sur le terminal MetaTrader 5 ouvert sur ton PC, **avec stop et objectif attachés côté serveur** : même si l'app plante, la position reste protégée.
@@ -130,6 +136,8 @@ grok-desk/
   src/broker-mt5.js    exécution MetaTrader 5 (Axi)
   src/mt5.js           vérification du compte et recherche de symboles
   mt5/mt5_bridge.py    pont Python ↔ terminal MetaTrader 5
+  src/dashboard.js     publication vers l'app mobile
+  lovable/             prompt Lovable, schéma SQL, fonction Edge desk-sync
   pine/                indicateur et stratégie Pine v6
 ```
 
