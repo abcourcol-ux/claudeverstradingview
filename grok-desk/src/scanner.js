@@ -58,7 +58,7 @@ export async function scan(watchlist, provider, rules) {
     }
   }
   const candidates = all
-    .filter((m) => m.price >= rules.minPrice && ((m.relVolume ?? 0) >= rules.minRelVolume || (m.barSpike ?? 0) >= rules.minBarSpike || /LONG|SHORT/.test(m.tv?.Signal || '')))
+    .filter((m) => m.price >= rules.minPrice && ((m.relVolume ?? 0) >= rules.minRelVolume || (m.barSpike ?? 0) >= rules.minBarSpike || /LONG|SHORT|ACHAT|VENTE/.test(m.tv?.Signal || '')))
     .sort((a, b) => score(b) - score(a))
     .slice(0, rules.maxCandidates);
   return { all, candidates };

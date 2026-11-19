@@ -87,7 +87,7 @@ if signal
     tradesToday += 1
 
 // État textuel lu par l'app
-string verdict = dir == 0 ? (unusual ? "Volume sans direction" : "Calme") : not timeOk ? "Hors fenêtre" : rr < minRR ? "Refus Risque : R:R" : stopPc > maxStopPc ? "Refus Risque : stop" : tradesToday >= maxTrades and not signal ? "Refus Risque : quota" : extended ? "Refus Sceptique : étendu" : dir == 1 ? "LONG" : "SHORT"
+string verdict = dir == 0 ? (unusual ? "Volume sans direction" : "Calme") : not timeOk ? "Hors fenêtre" : rr < minRR ? "Refus Risque : R:R" : stopPc > maxStopPc ? "Refus Risque : stop" : tradesToday >= maxTrades and not signal ? "Refus Risque : quota" : extended ? "Refus Sceptique : étendu" : dir == 1 ? "ACHAT" : "VENTE"
 
 // ── Dessins ──
 plot(vwap, "VWAP", color.new(color.orange, 0), 2)
@@ -105,7 +105,7 @@ if signal
     lE := line.new(bar_index, entry,  bar_index + 12, entry,  color = color.blue, width = 2)
     lS := line.new(bar_index, stop,   bar_index + 12, stop,   color = color.red,  width = 2, style = line.style_dashed)
     lT := line.new(bar_index, target, bar_index + 12, target, color = color.lime, width = 2, style = line.style_dashed)
-    label.new(bar_index, dir == 1 ? low : high, str.format("GD {0}\nE {1}  S {2}  T {3}\nRVOL {4}  R:R {5}", dir == 1 ? "LONG" : "SHORT", str.tostring(entry, format.mintick), str.tostring(stop, format.mintick), str.tostring(target, format.mintick), str.tostring(rvol, "#.##"), str.tostring(rr, "#.##")), style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(color.green, 20) : color.new(color.red, 20), textcolor = color.white, size = size.small)
+    label.new(bar_index, dir == 1 ? low : high, str.format("{0}\nEntrée {1}\nStop {2}  Obj. {3}\nRVOL {4}  R:R {5}", dir == 1 ? "ACHAT" : "VENTE", str.tostring(entry, format.mintick), str.tostring(stop, format.mintick), str.tostring(target, format.mintick), str.tostring(rvol, "#.##"), str.tostring(rr, "#.##")), style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.new(color.green, 20) : color.new(color.red, 20), textcolor = color.white, size = size.small)
 
 // ── Tableau (format "Clé | Valeur", parsé par l'app) ──
 var table t = table.new(position.top_right, 2, 10, bgcolor = color.new(color.black, 20), border_width = 1)
@@ -113,7 +113,7 @@ cell(r, k, v, c) =>
     table.cell(t, 0, r, k, text_color = color.silver, text_size = size.small)
     table.cell(t, 1, r, v, text_color = c, text_size = size.small)
 if barstate.islast
-    cell(0, "Signal", verdict, verdict == "LONG" ? color.lime : verdict == "SHORT" ? color.red : color.yellow)
+    cell(0, "Signal", verdict, verdict == "ACHAT" ? color.lime : verdict == "VENTE" ? color.red : color.yellow)
     cell(1, "RVOL", str.tostring(rvol, "#.##"), rvol >= rvolMin ? color.lime : color.white)
     cell(2, "Spike", str.tostring(spike, "#.##"), spike >= spikeMin ? color.lime : color.white)
     cell(3, "VWAP", str.tostring(vwap, format.mintick), color.orange)
@@ -124,8 +124,19 @@ if barstate.islast
     cell(8, "Target", dir != 0 ? str.tostring(target, format.mintick) : "-", color.lime)
     cell(9, "Trades", str.tostring(tradesToday) + "/" + str.tostring(maxTrades), color.white)
 
-// ── Alertes (webhook possible vers l'app ou Telegram) ──
-alertcondition(signalLong,  "Grok Desk LONG",  "Grok Desk LONG {{ticker}} @ {{close}}")
-alertcondition(signalShort, "Grok Desk SHORT", "Grok Desk SHORT {{ticker}} @ {{close}}")
+// ── Valeurs lisibles (fenêtre de données, alertes, app) ──
+// Verdict : 1 ACHAT, -1 VENTE, 0 calme, 2 hors fenêtre, 3 refus R:R, 4 refus stop, 5 quota, 6 refus Sceptique (étendu), 7 volume sans direction
+verdictCode = signalLong ? 1 : signalShort ? -1 : dir == 0 ? (unusual ? 7 : 0) : not timeOk ? 2 : rr < minRR ? 3 : stopPc > maxStopPc ? 4 : tradesToday >= maxTrades ? 5 : extended ? 6 : 0
+plot(verdictCode, "Verdict", display = display.data_window)
+plot(dir != 0 ? entry : na, "Entry", display = display.data_window)
+plot(dir != 0 ? stop : na, "Stop", display = display.data_window)
+plot(dir != 0 ? target : na, "Target", display = display.data_window)
+plot(rvol, "RVOL", display = display.data_window)
+plot(spike, "Spike", display = display.data_window)
+
+// ── Alertes : crée une alerte sur cet indicateur et choisis « Grok Desk ACHAT » / « VENTE »,
+//    ou « N'importe quel appel de fonction alert() » pour recevoir les deux avec les niveaux ──
+alertcondition(signalLong,  "Grok Desk ACHAT", '🟢 ACHAT {{ticker}} · entrée {{plot("Entry")}} · stop {{plot("Stop")}} · objectif {{plot("Target")}} · RVOL {{plot("RVOL")}}')
+alertcondition(signalShort, "Grok Desk VENTE", '🔴 VENTE {{ticker}} · entrée {{plot("Entry")}} · stop {{plot("Stop")}} · objectif {{plot("Target")}} · RVOL {{plot("RVOL")}}')
 if signal
-    alert('{"bot":"grok-desk","ticker":"' + syminfo.ticker + '","dir":"' + (dir == 1 ? "long" : "short") + '","entry":' + str.tostring(entry) + ',"stop":' + str.tostring(stop) + ',"target":' + str.tostring(target) + ',"rvol":' + str.tostring(nz(rvol), "#.##") + '}', alert.freq_once_per_bar_close)
+    alert((dir == 1 ? "🟢 ACHAT " : "🔴 VENTE ") + syminfo.ticker + " · entrée " + str.tostring(entry, format.mintick) + " · stop " + str.tostring(stop, format.mintick) + " · objectif " + str.tostring(target, format.mintick) + " · R:R " + str.tostring(rr, "#.##") + " · RVOL " + str.tostring(nz(rvol), "#.##"), alert.freq_once_per_bar_close)
