@@ -2,7 +2,7 @@
 
 Six bots Grok (xAI) qui débattent dans un groupe Telegram pendant la séance de New York, avec TradingView comme source de données, d'indicateur et de backtest.
 
-> **Paper trading uniquement.** L'app ne passe aucun ordre réel : elle tient un journal de positions fictives. Ce n'est pas un conseil financier.
+> Par défaut en **paper trading** (journal fictif). L'exécution sur MetaTrader 5 est réservée au compte **démo** sauf autorisation explicite (voir plus bas). Ce n'est pas un conseil financier.
 
 ## Comment se passe un tour (toutes les 15 min en séance)
 
@@ -76,6 +76,42 @@ npm run desk:tv -- export
 
 Limites : la profondeur d'historique en 5 min dépend de ton abonnement TradingView (Deep Backtesting sur les plans payants). News et Chef ne sont pas dans le backtest, qui mesure donc l'avantage « brut » des règles Scanner/Planificateur/Risque/Sceptique.
 
+## Exécution sur Axi (MetaTrader 5) — démo d'abord
+
+Par défaut le desk est en papier. Avec `DESK_BROKER=mt5`, chaque GO du Chef devient un **ordre au marché** sur le terminal MetaTrader 5 ouvert sur ton PC, **avec stop et objectif attachés côté serveur** : même si l'app plante, la position reste protégée.
+
+Garde-fous :
+- le pont **refuse de démarrer sur un compte réel** tant que `MT5_ALLOW_LIVE=YES_REAL_MONEY` n'est pas dans le `.env` ;
+- avec `MT5_LOGIN`, il refuse tout autre compte connecté au terminal ;
+- la taille est recalculée sur l'**équité réelle** du compte avant chaque tour ;
+- l'ordre est annulé si le prix MT5 s'est éloigné de l'entrée prévue de plus de `RISK_MAX_ENTRY_DISTANCE_PCT` ;
+- seules les positions du desk (numéro magique 770077) sont suivies et fermées 5 min avant la clôture ;
+- seuls les titres présents dans `MT5_SYMBOLS` sont scannés.
+
+Installation (Windows) :
+
+1. Installe MetaTrader 5 d'Axi, connecte-toi au **compte démo** et coche *Outils → Options → Expert Advisors → Autoriser le trading algorithmique*.
+2. Installe Python 3, puis le paquet MetaTrader5 :
+
+```bash
+pip install MetaTrader5
+```
+
+3. Dans `grok-desk/.env` : `DESK_BROKER=mt5`, `MT5_LOGIN=<ton login démo>`, `MT5_SYMBOLS=NVDA:NVIDIA+,...`
+4. Vérifie (aucun ordre passé) :
+
+```bash
+npm run desk:mt5 -- check
+```
+
+```bash
+npm run desk:mt5 -- symbols "*TESLA*"
+```
+
+Les symboles d'actions Axi portent souvent le nom de la société (`NVIDIA+`), pas le ticker : la commande `symbols` permet de les trouver.
+
+**Passage en réel** : seulement quand le backtest et plusieurs semaines de démo sont concluants. Il suffit alors de changer de compte dans MT5, de mettre son login dans `MT5_LOGIN` et d'ajouter `MT5_ALLOW_LIVE=YES_REAL_MONEY`. Le Chef annonce dans le groupe sur quel compte (DÉMO/RÉEL) il est connecté.
+
 ## Fichiers
 
 ```
@@ -91,6 +127,9 @@ grok-desk/
   src/journal.js       journal de paper trading
   src/market-hours.js  calendrier NYSE
   src/tradingview.js   export / indicateur / backtest
+  src/broker-mt5.js    exécution MetaTrader 5 (Axi)
+  src/mt5.js           vérification du compte et recherche de symboles
+  mt5/mt5_bridge.py    pont Python ↔ terminal MetaTrader 5
   pine/                indicateur et stratégie Pine v6
 ```
 

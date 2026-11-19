@@ -24,7 +24,8 @@
     "desk": "node grok-desk/src/index.js",
     "desk:demo": "node grok-desk/src/index.js --mock --once",
     "desk:tv": "node grok-desk/src/tradingview.js",
-    "test:desk": "node --test tests/grok-desk.test.js"
+    "test:desk": "node --test tests/grok-desk.test.js",
+    "desk:mt5": "node grok-desk/src/mt5.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

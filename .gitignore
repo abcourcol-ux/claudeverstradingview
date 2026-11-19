@@ -6,3 +6,4 @@ temp_*
 discovery-log.json
 grok-desk/.env
 grok-desk/data/
+__pycache__/

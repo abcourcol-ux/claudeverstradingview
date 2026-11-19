@@ -104,3 +104,68 @@ describe('grok-desk — tour de débat (mock)', () => {
     assert.equal(r.decision, 'NO_GO');
   });
 });
+
+describe('grok-desk — courtier MT5 (faux terminal)', async () => {
+  const { createMt5Broker, sharesToLots } = await import('../grok-desk/src/broker-mt5.js');
+  const fake = new URL('./fixtures/fake_mt5', import.meta.url).pathname;
+  const withEnv = async (env, fn) => {
+    const saved = { ...process.env };
+    Object.assign(process.env, { PYTHONPATH: fake, ...env });
+    try { return await fn(); } finally { process.env = saved; }
+  };
+  const plan = { ticker: 'NVDA', direction: 'long', entry: 180.05, stop: 178, target: 184 };
+
+  it('convertit des actions en lots (pas et bornes)', () => {
+    assert.equal(sharesToLots(62, { contract_size: 1, volume_step: 1, volume_max: 100 }), 62);
+    assert.equal(sharesToLots(37, { contract_size: 1, volume_step: 0.5, volume_max: 300 }), 37);
+    assert.equal(sharesToLots(7, { contract_size: 20, volume_step: 0.01 }), 0.35);
+  });
+
+  it('démo : ouvre avec stop/objectif, voit la position, ferme et lit le P&L', () => withEnv({ FAKE_MT5_TRADE_MODE: '0' }, async () => {
+    const b = createMt5Broker({ symbolMap: 'NVDA:NVIDIA+' });
+    try {
+      const acc = await b.connect();
+      assert.equal(acc.mode, 'demo');
+      const fill = await b.open(plan, { shares: 25 }, 1.5);
+      assert.equal(fill.symbol, 'NVIDIA+');
+      assert.equal(fill.lots, 25);
+      const pos = await b.positions();
+      assert.equal(pos.length, 1);
+      assert.equal(pos[0].sl, 178);
+      assert.equal(pos[0].tp, 184);
+      await b.close(fill.ticket);
+      assert.equal((await b.positions()).length, 0);
+      const res = await b.closed(fill.ticket);
+      assert.equal(res.pnl, -14.5); // profit -12,5 + commissions -1 -1
+    } finally { b.stop(); }
+  }));
+
+  it('refuse un compte RÉEL sans MT5_ALLOW_LIVE=YES_REAL_MONEY', () => withEnv({ FAKE_MT5_TRADE_MODE: '2', MT5_ALLOW_LIVE: '' }, async () => {
+    const b = createMt5Broker({ symbolMap: 'NVDA:NVIDIA+' });
+    try { await assert.rejects(b.connect(), /LIVE_REFUSED/); } finally { b.stop(); }
+  }));
+
+  it('refuse un ordre si le prix a trop bougé ou si le titre n’est pas mappé', () => withEnv({ FAKE_MT5_TRADE_MODE: '0' }, async () => {
+    const b = createMt5Broker({ symbolMap: 'NVDA:NVIDIA+' });
+    try {
+      await b.connect();
+      await assert.rejects(b.open({ ...plan, entry: 170, stop: 168, target: 175 }, { shares: 10 }, 1.5), /trop loin/);
+      await assert.rejects(b.open({ ...plan, ticker: 'TSLA' }, { shares: 10 }, 1.5), /MT5_SYMBOLS/);
+    } finally { b.stop(); }
+  }));
+});
+
+describe('grok-desk — GO exécuté par le courtier', () => {
+  const run = (broker) => runRound({ cfg, llm: createMockGrok(), tg: createTelegram(cfg.telegram, { dryRun: true, log: () => {} }), provider: mockProvider(cfg.watchlist), journal: emptyJournal(), status: okStatus, broker });
+  it('position enregistrée avec le ticket MT5', async () => {
+    const r = await run({ label: 'DÉMO', open: async (p, c) => ({ ticket: 42, symbol: 'X+', price: Number(p.entry), lots: c.shares, shares: c.shares }) });
+    assert.equal(r.decision, 'GO');
+    assert.equal(r.position.ticket, 42);
+    assert.equal(r.position.broker, 'mt5');
+  });
+  it('ordre refusé par MT5 → rien dans le journal', async () => {
+    const r = await run({ open: async () => { throw new Error('marché fermé'); } });
+    assert.equal(r.decision, 'BROKER_REJECTED');
+    assert.equal(r.position, undefined);
+  });
+});

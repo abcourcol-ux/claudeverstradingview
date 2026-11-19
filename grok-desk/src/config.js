@@ -67,6 +67,9 @@ export function loadConfig(env = process.env, flags = {}) {
       flattenMinutesBeforeClose: num(env.RISK_FLATTEN_MIN_BEFORE_CLOSE, 5),
       pendingExpiryMinutes: num(env.RISK_PENDING_EXPIRY_MIN, 45),
     },
+    // paper = journal fictif ; mt5 = ordres envoyés au terminal MetaTrader 5 (Axi), démo sauf autorisation explicite
+    broker: (env.DESK_BROKER || 'paper').toLowerCase(),
+    mt5: { python: env.MT5_PYTHON, symbolMap: env.MT5_SYMBOLS || '' },
     extraHolidays: list(env.DESK_EXTRA_HOLIDAYS, []),
     journalPath: env.DESK_JOURNAL_PATH || fileURLToPath(new URL('../data/journal.json', import.meta.url)),
   };

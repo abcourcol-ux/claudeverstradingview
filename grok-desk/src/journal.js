@@ -31,6 +31,29 @@ export function createJournal(path, { persist = true } = {}) {
       save();
       return pos;
     },
+    // Position réellement exécutée chez le courtier (MT5).
+    openFilled(plan, fill, now = new Date()) {
+      const pos = {
+        id: `${plan.ticker}-${fill.ticket}`, ticker: plan.ticker, direction: plan.direction, broker: 'mt5',
+        ticket: fill.ticket, brokerSymbol: fill.symbol, lots: fill.lots,
+        entry: fill.price, stop: Number(plan.stop), target: Number(plan.target), shares: fill.shares,
+        status: 'open', createdAt: now.toISOString(), filledAt: now.toISOString(), exit: null, pnl: null,
+      };
+      state.positions.push(pos);
+      state.tradesToday++;
+      save();
+      return pos;
+    },
+    markClosed(pos, { price, pnl, reason }) {
+      pos.status = 'closed';
+      pos.exit = round(price);
+      pos.pnl = round(pnl);
+      pos.reason = reason;
+      state.realizedPnl = round(state.realizedPnl + pos.pnl);
+      state.closed.push({ ...pos });
+      save();
+      return { type: reason, price, pnl: pos.pnl };
+    },
     // Met à jour une position avec le dernier prix ; renvoie les événements (fill, stop, target, expiry).
     update(pos, price, now, expiryMin) {
       const ev = [];

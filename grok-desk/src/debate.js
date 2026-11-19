@@ -7,7 +7,7 @@ import { escapeHtml } from './telegram.js';
 
 const J = (x) => JSON.stringify(x, null, 1);
 
-export async function runRound({ cfg, llm, tg, provider, journal, status, focusTicker = null, now = new Date() }) {
+export async function runRound({ cfg, llm, tg, provider, journal, status, focusTicker = null, now = new Date(), broker = null }) {
   const transcript = [];
   const result = { decision: 'NONE', focus: null, plan: null, riskCheck: null };
 
@@ -79,9 +79,24 @@ export async function runRound({ cfg, llm, tg, provider, journal, status, focusT
   result.decision = decision;
 
   if (decision === 'GO') {
-    const pos = journal.open(plan, check, now);
+    let pos, title;
+    if (broker) {
+      try {
+        const fill = await broker.open(plan, check, cfg.risk.maxEntryDistancePct);
+        pos = journal.openFilled(plan, fill, now);
+        title = `🟢 ORDRE ${escapeHtml(broker.label || 'MT5')} EXÉCUTÉ — ${escapeHtml(pos.ticker)} (${escapeHtml(fill.symbol)} #${fill.ticket})`;
+      } catch (e) {
+        result.decision = 'BROKER_REJECTED';
+        result.error = e.message;
+        await tg.send('risk', `Ordre bloqué à l'exécution : ${e.message}. Rien n'est passé.`);
+        return result;
+      }
+    } else {
+      pos = journal.open(plan, check, now);
+      title = `✅ ORDRE PAPIER — ${escapeHtml(pos.ticker)}`;
+    }
     result.position = pos;
-    const card = `✅ <b>ORDRE PAPIER — ${escapeHtml(pos.ticker)}</b>\n<code>${pos.direction.toUpperCase()} ${pos.shares} @ ${pos.entry}\nStop    ${pos.stop}\nObjectif ${pos.target}\nR:R ${check.rr} · risque ${check.riskUsd} $ · gain visé ${check.rewardUsd} $</code>`;
+    const card = `<b>${title}</b>\n<code>${pos.direction.toUpperCase()} ${pos.shares} @ ${pos.entry}\nStop    ${pos.stop}\nObjectif ${pos.target}\nR:R ${check.rr} · risque ${check.riskUsd} $ · gain visé ${check.rewardUsd} $</code>`;
     await tg.send('chef', card, { html: true });
     if (provider.snapshot) {
       const file = await provider.snapshot(pos.ticker).catch(() => null);
