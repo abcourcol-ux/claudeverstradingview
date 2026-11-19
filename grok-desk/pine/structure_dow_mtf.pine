@@ -10,7 +10,10 @@
 //@version=6
 indicator("Structure Dow MTF", overlay = true, max_lines_count = 200, max_labels_count = 200)
 
-swingLen = input.int(5, "Longueur des swings (bougies de chaque côté)", minval = 2, maxval = 20)
+swingLen = input.int(5, "Longueur des swings — UT < 1H (bougies de chaque côté)", minval = 2, maxval = 50)
+swingLenH = input.int(5, "Longueur des swings — UT ≥ 1H", minval = 2, maxval = 50)
+invMode = input.string("Origine de la jambe (fixe)", "Invalidation", options = ["Origine de la jambe (fixe)", "Dernier repli (suit les BOS)"], tooltip = "Fixe : le niveau reste au sommet/creux d'où la tendance est partie (ne bouge qu'au CHoCH). Suit les BOS : il se rapproche à chaque BOS.")
+trailing = invMode == "Dernier repli (suit les BOS)"
 showDraw = input.bool(true, "Dessiner BOS / CHoCH sur le graphique")
 showInv  = input.bool(true, "Afficher le niveau d'invalidation de l'UT du graphique")
 grpT = "Tableau (unité de temps et poids)"
@@ -32,7 +35,7 @@ posIn = input.string("Haut droite", "Position du tableau", options = ["Haut droi
 // Retourne [tendance, typeEvt, heureEvt, invalidation, nouvelEvt, niveauCassé, barreNiveau]
 //   tendance : 1 haussier, -1 baissier, 0 indéfini ; typeEvt : 1 BOS, 2 CHoCH
 //   nouvelEvt : +1 BOS haussier, +2 CHoCH haussier, -1 BOS baissier, -2 CHoCH baissier, 0 rien
-structure(int len) =>
+structure(int len, bool trail) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
     var float swingHi = na
@@ -85,10 +88,11 @@ structure(int len) =>
         lvlBar := invalBar
     if newEv != 0
         up = newEv > 0
-        if up
+        setInv = trail or trend == 0 or math.abs(newEv) == 2
+        if setInv and up
             inval := trend == 0 ? swingLo : loSince
             invalBar := trend == 0 ? swingLoBar : loSinceBar
-        else
+        else if setInv
             inval := trend == 0 ? swingHi : hiSince
             invalBar := trend == 0 ? swingHiBar : hiSinceBar
         trend := up ? 1 : -1
@@ -105,19 +109,22 @@ structure(int len) =>
     [trend, evType, evTime, inval, newEv, lvl, lvlBar]
 
 // Valeurs de la bougie clôturée (pas de repeinte avec lookahead_on)
-structurePrev(int len) =>
-    [t, e, tm, iv, n, l, b] = structure(len)
+structurePrev(int len, bool trail) =>
+    [t, e, tm, iv, n, l, b] = structure(len, trail)
     [t[1], e[1], tm[1], iv[1]]
 
-[t1, e1, m1, i1] = request.security(syminfo.tickerid, tf1, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
-[t2, e2, m2, i2] = request.security(syminfo.tickerid, tf2, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
-[t3, e3, m3, i3] = request.security(syminfo.tickerid, tf3, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
-[t4, e4, m4, i4] = request.security(syminfo.tickerid, tf4, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
-[t5, e5, m5, i5] = request.security(syminfo.tickerid, tf5, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
-[t6, e6, m6, i6] = request.security(syminfo.tickerid, tf6, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+lenFor(string tf) =>
+    timeframe.in_seconds(tf) >= 3600 ? swingLenH : swingLen
+
+[t1, e1, m1, i1] = request.security(syminfo.tickerid, tf1, structurePrev(lenFor(tf1), trailing), lookahead = barmerge.lookahead_on)
+[t2, e2, m2, i2] = request.security(syminfo.tickerid, tf2, structurePrev(lenFor(tf2), trailing), lookahead = barmerge.lookahead_on)
+[t3, e3, m3, i3] = request.security(syminfo.tickerid, tf3, structurePrev(lenFor(tf3), trailing), lookahead = barmerge.lookahead_on)
+[t4, e4, m4, i4] = request.security(syminfo.tickerid, tf4, structurePrev(lenFor(tf4), trailing), lookahead = barmerge.lookahead_on)
+[t5, e5, m5, i5] = request.security(syminfo.tickerid, tf5, structurePrev(lenFor(tf5), trailing), lookahead = barmerge.lookahead_on)
+[t6, e6, m6, i6] = request.security(syminfo.tickerid, tf6, structurePrev(lenFor(tf6), trailing), lookahead = barmerge.lookahead_on)
 
 // ── Structure de l'unité de temps du graphique (dessins) ──
-[cT, cE, cTm, cIv, cNew, cLvl, cBar] = structure(swingLen)
+[cT, cE, cTm, cIv, cNew, cLvl, cBar] = structure(lenFor(timeframe.period), trailing)
 if showDraw and cNew != 0 and not na(cLvl) and not na(cBar)
     up = cNew > 0
     col = up ? color.teal : color.red
@@ -180,6 +187,20 @@ if barstate.islast
     msg = t5 != 0 and t6 != 0 and t5 != t6 ? tfLabel(tf5) + " vs " + tfLabel(tf6) + " en conflit → réduire taille / range probable" : t5 != 0 and t5 == t6 ? tfLabel(tf5) + " et " + tfLabel(tf6) + " alignés → biais de fond " + (t6 == 1 ? "haussier" : "baissier") : "Structure de fond indéfinie"
     table.cell(tb, 0, 8, msg, text_color = color.silver, text_size = size.tiny)
     table.merge_cells(tb, 0, 8, 5, 8)
+
+// ── Valeurs dans la fenêtre de données (historique lisible, calibrage) ──
+plot(t1, "Tendance UT1", display = display.data_window)
+plot(i1, "Invalidation UT1", display = display.data_window)
+plot(t2, "Tendance UT2", display = display.data_window)
+plot(i2, "Invalidation UT2", display = display.data_window)
+plot(t3, "Tendance UT3", display = display.data_window)
+plot(i3, "Invalidation UT3", display = display.data_window)
+plot(t4, "Tendance UT4", display = display.data_window)
+plot(i4, "Invalidation UT4", display = display.data_window)
+plot(t5, "Tendance UT5", display = display.data_window)
+plot(i5, "Invalidation UT5", display = display.data_window)
+plot(t6, "Tendance UT6", display = display.data_window)
+plot(i6, "Invalidation UT6", display = display.data_window)
 
 // ── Alertes ──
 alertcondition(cNew == 2,  "CHoCH haussier", "CHoCH ▲ {{ticker}} {{interval}} à {{close}}")
