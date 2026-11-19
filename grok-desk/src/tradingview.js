@@ -5,6 +5,7 @@
 //   node grok-desk/src/tradingview.js indicator              → ajoute l'indicateur "Grok Desk" au graphique
 //   node grok-desk/src/tradingview.js backtest [SYM ...]     → stratégie + Strategy Tester sur chaque symbole
 //        options : --timeframe 5  --telegram (le Chef poste le bilan, le Sceptique le critique)
+import { fileURLToPath } from 'url';
 import { mkdirSync, writeFileSync } from 'fs';
 import { loadConfig, loadEnvFile } from './config.js';
 import { loadPine } from './pine-template.js';
@@ -12,12 +13,12 @@ import { createGrok, parseJson, sleep } from './grok.js';
 import { createTelegram, escapeHtml } from './telegram.js';
 import { PERSONAS } from './personas.js';
 
-loadEnvFile(new URL('../.env', import.meta.url).pathname);
+loadEnvFile(fileURLToPath(new URL('../.env', import.meta.url)));
 const cfg = loadConfig();
 const args = process.argv.slice(2);
 const cmd = args[0];
 const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : d; };
-const dataDir = new URL('../data/', import.meta.url).pathname;
+const dataDir = fileURLToPath(new URL('../data/', import.meta.url)).replace(/[\\/]?$/, '/');
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
 async function core() { return import('../../src/core/index.js'); }

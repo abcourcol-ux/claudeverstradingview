@@ -1,4 +1,5 @@
 // Configuration de Grok Desk — tout passe par des variables d'environnement (.env).
+import { fileURLToPath } from 'url';
 import { existsSync, readFileSync } from 'fs';
 
 export function loadEnvFile(path) {
@@ -67,6 +68,6 @@ export function loadConfig(env = process.env, flags = {}) {
       pendingExpiryMinutes: num(env.RISK_PENDING_EXPIRY_MIN, 45),
     },
     extraHolidays: list(env.DESK_EXTRA_HOLIDAYS, []),
-    journalPath: env.DESK_JOURNAL_PATH || new URL('../data/journal.json', import.meta.url).pathname,
+    journalPath: env.DESK_JOURNAL_PATH || fileURLToPath(new URL('../data/journal.json', import.meta.url)),
   };
 }

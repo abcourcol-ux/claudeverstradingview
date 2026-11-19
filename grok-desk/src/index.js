@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Grok Desk — six bots Grok qui débattent dans un groupe Telegram pendant la séance de New York.
 // Usage : node grok-desk/src/index.js [--mock] [--dry-run] [--once] [--source yahoo|tradingview] [--focus NVDA]
+import { fileURLToPath } from 'url';
 import { loadConfig, loadEnvFile } from './config.js';
 import { marketStatus, nextOpen } from './market-hours.js';
 import { createGrok, createMockGrok } from './grok.js';
@@ -13,7 +14,7 @@ const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
 const opt = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
 
-loadEnvFile(new URL('../.env', import.meta.url).pathname);
+loadEnvFile(fileURLToPath(new URL('../.env', import.meta.url)));
 const cfg = loadConfig(process.env, { mock: flag('mock') || undefined, dryRun: flag('dry-run') || undefined });
 const source = opt('source') || process.env.DESK_SOURCE || 'yahoo';
 
