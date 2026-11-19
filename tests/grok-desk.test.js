@@ -223,3 +223,29 @@ describe('grok-desk — or (XAUUSD)', async () => {
     } finally { b.stop(); process.env = saved; }
   });
 });
+
+describe('grok-desk — carte de prise de position', async () => {
+  const { buildSignal, formatSignal, estimateProbability, riskLevel } = await import('../grok-desk/src/signal.js');
+  it('vente or : fourchette, SL, TP1/TP2/TP final, statut MAINTENANT', () => {
+    const s = buildSignal({ symbol: 'XAUUSD', direction: 'short', entry: 3690, stop: 3700, finalTarget: 3655, atr: 6, price: 3689.5, biasAligned: 0.6 });
+    assert.equal(s.late, false);
+    assert.deepEqual(s.zone, ['3688.50', '3691.50']);
+    assert.equal(s.tp1, '3680.00');
+    assert.equal(s.tp2, '3670.00');
+    assert.equal(s.tpFinal, '3655.00');
+    const txt = formatSignal(s, 'Rejet de la zone 0,5');
+    assert.match(txt, /^🟢 MAINTENANT \| XAUUSD \| 📉 VENTE/);
+    assert.match(txt, /SL : 3700.00/);
+    assert.match(txt, /💬 Rejet de la zone 0,5/);
+  });
+  it('TROP TARD quand le prix a déjà quitté la fourchette vers l’objectif', () => {
+    const s = buildSignal({ symbol: 'XAUUSD', direction: 'long', entry: 3690, stop: 3680, atr: 6, price: 3697 });
+    assert.equal(s.late, true);
+    assert.match(formatSignal(s), /^🔴 TROP TARD/);
+  });
+  it('5 niveaux de risque selon la probabilité estimée', () => {
+    assert.equal(riskLevel(0.7).label, 'Peu risqué');
+    assert.equal(riskLevel(0.3).label, 'Très risqué');
+    assert.ok(estimateProbability({ rr: 2, biasAligned: 1 }) > estimateProbability({ rr: 2, biasAligned: -1, newsSoon: true }));
+  });
+});

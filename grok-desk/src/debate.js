@@ -4,6 +4,7 @@ import { parseJson } from './grok.js';
 import { scan } from './scanner.js';
 import { evaluatePlan } from './risk.js';
 import { escapeHtml } from './telegram.js';
+import { buildSignal, formatSignal } from './signal.js';
 
 const J = (x) => JSON.stringify(x, null, 1);
 
@@ -96,7 +97,15 @@ export async function runRound({ cfg, llm, tg, provider, journal, status, focusT
       title = `✅ ORDRE PAPIER — ${escapeHtml(pos.ticker)}`;
     }
     result.position = pos;
-    const card = `<b>${title}</b>\n<code>${pos.direction.toUpperCase()} ${pos.shares} @ ${pos.entry}\nStop    ${pos.stop}\nObjectif ${pos.target}\nR:R ${check.rr} · risque ${check.riskUsd} $ · gain visé ${check.rewardUsd} $</code>`;
+    // Carte de prise de position au format du desk (statut, indice, sens, entrée, SL, TP1/TP2/TP final, risque)
+    const sig = buildSignal({
+      symbol: pos.ticker, direction: pos.direction, entry: Number(plan.entry), stop: Number(plan.stop),
+      finalTarget: Number(plan.target), atr: focus.atr5m, price: focus.price,
+      backtestWinRate: cfg.risk.backtestWinRate, extended: Math.abs(focus.vsVwapPct ?? 0) > 1.5,
+      biasAligned: Number.isFinite(ctx.biasAligned) ? ctx.biasAligned : 0,
+    });
+    result.signal = sig;
+    const card = `<b>${title}</b>\n<pre>${escapeHtml(formatSignal(sig, String(ch.message || '').slice(0, 300)))}</pre>\n<code>${pos.shares} unités · risque ${check.riskUsd} $ · gain visé ${check.rewardUsd} $</code>`;
     await tg.send('chef', card, { html: true });
     if (provider.snapshot) {
       const file = await provider.snapshot(pos.ticker).catch(() => null);

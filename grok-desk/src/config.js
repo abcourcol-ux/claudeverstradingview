@@ -69,6 +69,8 @@ export function loadConfig(env = process.env, flags = {}) {
       noEntryLastMinutes: num(env.RISK_NO_ENTRY_LAST_MIN, 45),
       flattenMinutesBeforeClose: num(env.RISK_FLATTEN_MIN_BEFORE_CLOSE, 5),
       pendingExpiryMinutes: num(env.RISK_PENDING_EXPIRY_MIN, 45),
+      // Taux de réussite mesuré en backtest (0-1), utilisé pour estimer la probabilité des signaux
+      backtestWinRate: env.RISK_BACKTEST_WIN_RATE ? Number(env.RISK_BACKTEST_WIN_RATE) : undefined,
     },
     // paper = journal fictif ; mt5 = ordres envoyés au terminal MetaTrader 5 (Axi), démo sauf autorisation explicite
     broker: (env.DESK_BROKER || 'paper').toLowerCase(),
