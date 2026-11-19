@@ -84,6 +84,12 @@ npm run desk:tv -- export
 
 Limites : la profondeur d'historique en 5 min dépend de ton abonnement TradingView (Deep Backtesting sur les plans payants). News et Chef ne sont pas dans le backtest, qui mesure donc l'avantage « brut » des règles Scanner/Planificateur/Risque/Sceptique.
 
+## Or (XAUUSD)
+
+L'or n'a pas de vrai volume (seulement un volume de ticks chez le courtier, assez plat). Le desk et les scripts Pine détectent donc aussi l'activité inhabituelle par **l'amplitude** : une bougie 5 min plus grande que `SCAN_MIN_RANGE_SPIKE` × ATR (2 par défaut). Le VWAP est remplacé par la moyenne des prix de la journée quand il n'y a pas de volume, et la taille est en onces (1 lot Axi = 100 onces, minimum 0,01 lot = 1 once).
+
+Réglages conseillés dans `.env` : `DESK_WATCHLIST=XAUUSD`, `DESK_SOURCE=mt5`, `MT5_SYMBOLS=XAUUSD:XAUUSD`. Sur TradingView : graphique **5 min**, indicateur/stratégie avec « Source d'activité » sur **Auto** ou **Amplitude**, fenêtre de trading réglable (9h30–16h00 New York par défaut, le moment le plus liquide pour l'or).
+
 ## Sur ton téléphone (app Lovable)
 
 Le desk publie en direct tout ce qui se passe : débat des bots, décisions, positions, P&L, état du marché et du compte. Une app Lovable l'affiche sur ton téléphone et permet de le piloter (pause, reprise, scanner un titre, poser une question au Chef). L'app ne passe aucun ordre elle-même.

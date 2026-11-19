@@ -164,8 +164,40 @@ def cmd_closed(req):
             "reason": reasons.get(last.reason, "manuel")}
 
 
+_offset = {"value": None}
+
+
+def server_offset(sym):
+    """Décalage heure serveur MT5 - UTC, en secondes (Axi = New York + 7 h).
+    MT5_SERVER_UTC_OFFSET_HOURS le force ; sinon déduit de la dernière cotation (marché ouvert)."""
+    if os.environ.get("MT5_SERVER_UTC_OFFSET_HOURS"):
+        return int(float(os.environ["MT5_SERVER_UTC_OFFSET_HOURS"]) * 3600)
+    if _offset["value"] is None:
+        tick = mt5.symbol_info_tick(sym)
+        if tick is None:
+            raise DeskError("impossible de déduire l'heure du serveur MT5 : définis MT5_SERVER_UTC_OFFSET_HOURS (Axi : 2 en hiver, 3 en été)")
+        diff = tick.time - datetime.now(timezone.utc).timestamp()
+        if abs(diff) > 14 * 3600:
+            raise DeskError("cotation trop ancienne pour déduire l'heure du serveur : définis MT5_SERVER_UTC_OFFSET_HOURS")
+        _offset["value"] = int(round(diff / 1800.0) * 1800)
+    return _offset["value"]
+
+
+def cmd_rates(req):
+    """Bougies : time (unix s, UTC), open, high, low, close, tick_volume, real_volume."""
+    tf = getattr(mt5, "TIMEFRAME_" + str(req.get("timeframe", "M5")).upper())
+    symbol_info(req["symbol"])
+    off = server_offset(req["symbol"])
+    rates = mt5.copy_rates_from_pos(req["symbol"], tf, 0, int(req.get("count", 1500)))
+    if rates is None:
+        raise DeskError(f"copy_rates {req['symbol']}: {last_error()}")
+    return [{"time": int(r["time"]) - off, "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]),
+             "close": float(r["close"]), "tick_volume": int(r["tick_volume"]), "real_volume": int(r["real_volume"])}
+            for r in rates]
+
+
 COMMANDS = {"init": cmd_init, "account": cmd_account, "symbol": cmd_symbol, "symbols": cmd_symbols,
-            "open": cmd_open, "positions": cmd_positions, "close": cmd_close, "closed": cmd_closed}
+            "rates": cmd_rates, "open": cmd_open, "positions": cmd_positions, "close": cmd_close, "closed": cmd_closed}
 
 
 def main():

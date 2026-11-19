@@ -7,7 +7,7 @@ import { marketStatus, nextOpen } from './market-hours.js';
 import { createGrok, createMockGrok } from './grok.js';
 import { createTelegram, escapeHtml } from './telegram.js';
 import { createJournal } from './journal.js';
-import { mockProvider, tradingviewProvider, yahooProvider } from './providers.js';
+import { mockProvider, mt5Provider, tradingviewProvider, yahooProvider } from './providers.js';
 import { runRound, askChef } from './debate.js';
 import { createMt5Broker } from './broker-mt5.js';
 import { createDashboard } from './dashboard.js';
@@ -29,24 +29,30 @@ if (dash) {
   tg.send = async (bot, text, opts) => { dash.message(bot, text); return rawSend(bot, text, opts); };
 }
 const journal = createJournal(cfg.journalPath, { persist: !cfg.mock });
-const provider = cfg.mock ? mockProvider(cfg.watchlist)
-  : source === 'tradingview' ? await tradingviewProvider({ timeframe: process.env.TV_TIMEFRAME || '5' })
-  : yahooProvider();
-
-// Courtier MT5 (Axi) : connexion, vérification démo/réel, capital = équité du compte.
+// MetaTrader 5 (Axi) : pour exécuter (DESK_BROKER=mt5) et/ou comme source de données (DESK_SOURCE=mt5).
+let mt5 = null;
 let broker = null;
-if (cfg.broker === 'mt5' && !cfg.mock) {
-  broker = createMt5Broker(cfg.mt5);
-  const acc = await broker.connect().catch((e) => { console.error(`MT5 : ${e.message}`); process.exit(1); });
-  broker.label = acc.mode === 'demo' ? 'DÉMO' : 'RÉEL';
-  cfg.risk.capital = acc.equity;
-  const untradable = cfg.watchlist.filter((t) => !broker.tradable(t));
+if ((cfg.broker === 'mt5' || source === 'mt5') && !cfg.mock) {
+  mt5 = createMt5Broker(cfg.mt5);
+  const acc = await mt5.connect().catch((e) => { console.error(`MT5 : ${e.message}`); process.exit(1); });
+  mt5.label = acc.mode === 'demo' ? 'DÉMO' : 'RÉEL';
+  const untradable = cfg.watchlist.filter((t) => !mt5.tradable(t));
   if (untradable.length) console.warn(`MT5 : pas de symbole pour ${untradable.join(', ')} → retirés de la watchlist (voir MT5_SYMBOLS)`);
-  cfg.watchlist = cfg.watchlist.filter((t) => broker.tradable(t));
-  if (!cfg.watchlist.length) { console.error('MT5 : aucun titre de la watchlist n\'a de symbole dans MT5_SYMBOLS'); process.exit(1); }
-  console.log(`MT5 : compte ${acc.login} (${acc.server}) — ${broker.label}, équité ${acc.equity} ${acc.currency}`);
-  await tg.send('chef', `Connecté à MetaTrader 5, compte ${acc.login} (${broker.label}), équité ${acc.equity} ${acc.currency}. Les GO seront exécutés pour de vrai sur ce compte.`);
+  cfg.watchlist = cfg.watchlist.filter((t) => mt5.tradable(t));
+  if (!cfg.watchlist.length) { console.error('MT5 : aucun élément de la watchlist n\'a de symbole dans MT5_SYMBOLS'); process.exit(1); }
+  console.log(`MT5 : compte ${acc.login} (${acc.server}) — ${mt5.label}, équité ${acc.equity} ${acc.currency}`);
+  if (cfg.broker === 'mt5') {
+    broker = mt5;
+    cfg.risk.capital = acc.equity;
+    await tg.send('chef', `Connecté à MetaTrader 5, compte ${acc.login} (${mt5.label}), équité ${acc.equity} ${acc.currency}. Les GO seront exécutés pour de vrai sur ce compte.`);
+  }
 }
+
+const yahoo = yahooProvider({ symbolMap: cfg.yahooSymbols });
+const provider = cfg.mock ? mockProvider(cfg.watchlist)
+  : source === 'mt5' ? mt5Provider(mt5, { news: (t) => yahoo.news(t) })
+  : source === 'tradingview' ? await tradingviewProvider({ timeframe: process.env.TV_TIMEFRAME || '5' })
+  : yahoo;
 
 const state = { paused: false, busy: false, lastRound: 0, wasOpen: null, lastQuiet: 0 };
 const fmtCard = (p) => `${p.direction.toUpperCase()} ${p.ticker} ${p.shares} @ ${p.entry} · stop ${p.stop} · obj. ${p.target} · ${p.status}${p.pnl != null ? ` · ${p.pnl} $` : ''}`;

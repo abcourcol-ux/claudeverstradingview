@@ -125,10 +125,12 @@ if (-not (Get-EnvValue 'TELEGRAM_CHAT_ID') -and $chefToken) {
 Write-Host ''
 Write-Host '  MetaTrader 5 Axi : le terminal doit etre ouvert, connecte au compte DEMO,' -ForegroundColor Gray
 Write-Host '  avec Outils > Options > Expert Advisors > Autoriser le trading algorithmique.' -ForegroundColor Gray
+[void](Ask 'DESK_WATCHLIST' 'Que trader ? (ex. XAUUSD, ou NVDA,TSLA)' -default 'XAUUSD')
 $login = Ask 'MT5_LOGIN' 'Login du compte DEMO MT5 (vide = rester en papier)'
 if ($login) {
   Set-EnvValue 'DESK_BROKER' 'mt5'
-  [void](Ask 'MT5_SYMBOLS' 'Correspondances ticker:symbole Axi' -default 'NVDA:NVIDIA+')
+  Set-EnvValue 'DESK_SOURCE' 'mt5'
+  [void](Ask 'MT5_SYMBOLS' 'Correspondances ticker:symbole Axi' -default 'XAUUSD:XAUUSD')
   if (Get-EnvValue 'MT5_ALLOW_LIVE') { Warn 'MT5_ALLOW_LIVE est defini : le compte REEL serait autorise. Retire cette ligne pour rester en demo.' }
 } else { Set-EnvValue 'DESK_BROKER' 'paper' }
 

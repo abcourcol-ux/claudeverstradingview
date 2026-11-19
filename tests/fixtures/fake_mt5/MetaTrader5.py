@@ -10,6 +10,8 @@ ORDER_FILLING_FOK, ORDER_FILLING_IOC = 0, 1
 TRADE_RETCODE_DONE = 10009
 DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_OUT_BY = 0, 1, 3
 DEAL_REASON_SL, DEAL_REASON_TP = 4, 5
+TIMEFRAME_M5 = 5
+SERVER_OFFSET = 2 * 3600  # Axi en hiver : UTC+2
 
 _mode = int(os.environ.get("FAKE_MT5_TRADE_MODE", "0"))
 _positions, _deals, _sent = [], [], []
@@ -22,7 +24,9 @@ def last_error(): return (1, "ok")
 def account_info(): return NS(login=10072219, server="Axi-Demo", trade_mode=_mode, currency="USD", balance=5000.0, equity=4960.0, margin_free=4960.0, leverage=1000)
 def symbol_select(sym, on): return sym == "NVIDIA+"
 def symbol_info(sym): return NS(name=sym, description="NVIDIA Corp", trade_contract_size=1.0, volume_min=1.0, volume_max=20000.0, volume_step=1.0, digits=2, point=0.01, trade_stops_level=0, trade_mode=4, filling_mode=3)
-def symbol_info_tick(sym): return NS(bid=180.00, ask=180.05)
+def symbol_info_tick(sym):
+    import time
+    return NS(bid=180.00, ask=180.05, time=int(time.time()) + SERVER_OFFSET)
 def symbols_get(flt=None): return [NS(name="NVIDIA+", description="NVIDIA Corp", path="SHARES\\US\\NVIDIA+")]
 
 
@@ -46,3 +50,10 @@ def positions_get(ticket=None, symbol=None):
 
 def history_deals_get(a, b, position=None):
     return [d for d in _deals if d.position_id == position]
+
+
+def copy_rates_from_pos(sym, tf, start, count):
+    import time
+    now = int(time.time()) // 300 * 300 + SERVER_OFFSET
+    return [{"time": now - (count - 1 - i) * 300, "open": 180.0, "high": 181.0, "low": 179.0, "close": 180.5,
+             "tick_volume": 1000 + i, "real_volume": 0} for i in range(count)]

@@ -1,47 +1,53 @@
 // This source code is subject to the terms of the MIT License.
 // Grok Desk — stratégie de backtest : mêmes règles que l'indicateur et que les bots de l'app,
-// exécutées dans le Strategy Tester. Graphique 5 min, séance régulière (sans pré/post-marché).
+// exécutées dans le Strategy Tester. Graphique 5 min. Actions US (volume) ou or XAUUSD / forex (amplitude).
 //   Entrée au marché à l'ouverture de la bougie suivant le signal ; stop et objectif fixés au signal.
-//   Taille = risque % du capital / distance du stop, plafonnée par la taille max de position.
-//   Tout est fermé N minutes avant la clôture ; coupe-circuit sur perte journalière.
+//   Taille = risque % du capital / distance du stop, plafonnée par l'exposition max (effet de levier).
+//   Tout est fermé N minutes avant la fin de la fenêtre ; coupe-circuit sur perte journalière.
 //@version=6
-strategy("Grok Desk Strategy", overlay = true, initial_capital = 25000, currency = currency.USD, pyramiding = 0, commission_type = strategy.commission.cash_per_order, commission_value = 1.0, slippage = 2, margin_long = 100, margin_short = 100)  // @desk CAPITAL
+strategy("Grok Desk Strategy", overlay = true, initial_capital = 25000, currency = currency.USD, pyramiding = 0, commission_type = strategy.commission.cash_per_order, commission_value = 1.0, slippage = 2, margin_long = 20, margin_short = 20)  // @desk CAPITAL
 
 grpS = "🔎 Scanner"
+actSrc    = input.string("Auto", "Source d'activité", options = ["Auto", "Volume", "Amplitude"], tooltip = "Auto : volume s'il existe + amplitude. Amplitude : pour l'or/forex sans volume.", group = grpS)
 rvolDays  = input.int(5, "Jours de référence du volume relatif", minval = 1, maxval = 20, group = grpS)  // @desk RVOL_DAYS
 rvolMin   = input.float(2.0, "Volume relatif minimum", step = 0.1, group = grpS)  // @desk MIN_REL_VOLUME
-spikeMin  = input.float(3.0, "Pic de bougie minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
+spikeMin  = input.float(3.0, "Pic de volume minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
+rangeMin  = input.float(2.0, "Pic d'amplitude minimum (× ATR)", step = 0.1, group = grpS)  // @desk MIN_RANGE_SPIKE
 grpP = "🎯 Planificateur"
 atrLen    = input.int(14, "Période ATR", group = grpP)
 stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
 rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
 exitVwap  = input.bool(false, "Sortir si le prix recroise le VWAP", group = grpP)
 grpR = "🛡️ Risque"
+tradeSess = input.session("0930-1600", "Fenêtre de trading (heure de New York)", group = grpR)
 riskPct   = input.float(0.5, "Risque par trade (% du capital)", step = 0.1, group = grpR)  // @desk RISK_PER_TRADE_PCT
-maxPosPct = input.float(25.0, "Taille max de position (% du capital)", step = 1, group = grpR)  // @desk MAX_POSITION_PCT
+maxPosPct = input.float(400.0, "Exposition max (% du capital, effet de levier)", step = 25, group = grpR)  // @desk MAX_POSITION_PCT
+qtyStep   = input.float(1.0, "Pas de quantité (actions / onces)", step = 0.01, group = grpR)
 minRR     = input.float(1.5, "R:R minimum", step = 0.1, group = grpR)  // @desk MIN_RR
 maxStopPc = input.float(3.0, "Stop max (% de l'entrée)", step = 0.1, group = grpR)  // @desk MAX_STOP_PCT
 noFirst   = input.int(15, "Pas d'entrée les N premières minutes", group = grpR)  // @desk NO_ENTRY_FIRST_MIN
 noLast    = input.int(45, "Pas d'entrée les N dernières minutes", group = grpR)  // @desk NO_ENTRY_LAST_MIN
-flatMin   = input.int(5, "Tout fermer N minutes avant la clôture", group = grpR)  // @desk FLATTEN_MIN
+flatMin   = input.int(5, "Tout fermer N minutes avant la fin de la fenêtre", group = grpR)  // @desk FLATTEN_MIN
 maxTrades = input.int(5, "Trades max par jour", group = grpR)  // @desk MAX_TRADES_PER_DAY
 dayLossPc = input.float(2.0, "Perte journalière max (% du capital)", step = 0.1, group = grpR)  // @desk DAILY_LOSS_LIMIT_PCT
 grpK = "😈 Sceptique"
 maxExtAtr = input.float(3.0, "Refuser si prix > N × ATR du VWAP", step = 0.1, group = grpK)  // @desk MAX_EXT_ATR
-allowShort = input.bool(true, "Autoriser les shorts", group = grpK)
+allowShort = input.bool(true, "Autoriser les ventes (short)", group = grpK)
 grpD = "📅 Période de test"
 useFrom   = input.bool(false, "Limiter la période", group = grpD)
 fromDate  = input.time(timestamp("2025-01-01"), "Depuis", group = grpD)
 
 strategy.risk.max_intraday_loss(dayLossPc, strategy.percent_of_equity)
 
-// ── Scanner : volume relatif à la même heure ──
+hasVolume = ta.cum(nz(volume)) > 0
+useVolume = actSrc == "Volume" or (actSrc == "Auto" and hasVolume)
+useRange  = actSrc != "Volume"
+
 type DayVol
     array<float> cum
 
 var array<DayVol> days = array.new<DayVol>()
 var DayVol cur = na
-inSess = session.ismarket
 if session.isfirstbar_regular
     if not na(cur)
         days.push(cur)
@@ -49,9 +55,9 @@ if session.isfirstbar_regular
             days.shift()
     cur := DayVol.new(array.new<float>())
 float rvol = na
-if inSess and not na(cur)
+if not na(cur)
     prev = cur.cum.size() > 0 ? cur.cum.last() : 0.0
-    cur.cum.push(prev + volume)
+    cur.cum.push(prev + nz(volume))
     k = cur.cum.size() - 1
     float sum = 0.0
     int n = 0
@@ -61,20 +67,39 @@ if inSess and not na(cur)
             n += 1
     rvol := n > 0 and sum > 0 ? cur.cum.get(k) / (sum / n) : na
 
-spike = volume / ta.sma(volume, 20)[1]
-vwap  = ta.vwap(hlc3)
 atr   = ta.atr(atrLen)
-unusual = (not na(rvol) and rvol >= rvolMin) or spike >= spikeMin
+spike = volume / ta.sma(volume, 20)[1]
+rangeSpike = ta.tr(true) / atr[1]
 
-minSinceOpen = (time - time("1D")) / 60000.0
-minToClose   = (time_close("1D") - time_close) / 60000.0
-timeOk = inSess and minSinceOpen >= noFirst and minToClose >= noLast and (not useFrom or time >= fromDate)
+vw = ta.vwap(hlc3)
+var float sumPx = 0.0
+var int nPx = 0
+if session.isfirstbar_regular
+    sumPx := 0.0
+    nPx := 0
+sumPx += hlc3
+nPx += 1
+vwap = hasVolume and not na(vw) ? vw : sumPx / nPx
+
+volUnusual   = useVolume and ((not na(rvol) and rvol >= rvolMin) or (not na(spike) and spike >= spikeMin))
+rangeUnusual = useRange and not na(rangeSpike) and rangeSpike >= rangeMin
+unusual = volUnusual or rangeUnusual
+
+tz = "America/New_York"
+inWin = not na(time(timeframe.period, tradeSess, tz))
+yy = year(time, tz)
+mo = month(time, tz)
+dd = dayofmonth(time, tz)
+winStart = timestamp(tz, yy, mo, dd, int(str.tonumber(str.substring(tradeSess, 0, 2))), int(str.tonumber(str.substring(tradeSess, 2, 4))))
+winEnd   = timestamp(tz, yy, mo, dd, int(str.tonumber(str.substring(tradeSess, 5, 7))), int(str.tonumber(str.substring(tradeSess, 7, 9))))
+minSinceOpen = (time - winStart) / 60000.0
+minToClose   = (winEnd - time_close) / 60000.0
+timeOk = inWin and session.ismarket and timeframe.isintraday and minSinceOpen >= noFirst and minToClose >= noLast and (not useFrom or time >= fromDate)
 
 var int tradesToday = 0
 if session.isfirstbar_regular
     tradesToday := 0
 
-// ── Planificateur + Risque + Sceptique ──
 dir = unusual and close > vwap and close > open ? 1 : allowShort and unusual and close < vwap and close < open ? -1 : 0
 entryPx = close
 stopPx  = entryPx - dir * stopAtr * atr
@@ -83,10 +108,10 @@ riskPS  = math.abs(entryPx - stopPx)
 rr      = riskPS > 0 ? math.abs(tgtPx - entryPx) / riskPS : 0.0
 stopPc  = riskPS / entryPx * 100
 extended = math.abs(close - vwap) > maxExtAtr * atr
-qtyRisk = riskPS > 0 ? math.floor(strategy.equity * riskPct / 100 / riskPS) : 0
-qtyCap  = math.floor(strategy.equity * maxPosPct / 100 / entryPx)
-qty     = math.min(qtyRisk, qtyCap)
-signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= 1 and strategy.position_size == 0
+qtyRisk = riskPS > 0 ? strategy.equity * riskPct / 100 / riskPS : 0.0
+qtyCap  = strategy.equity * maxPosPct / 100 / entryPx
+qty     = math.floor(math.min(qtyRisk, qtyCap) / qtyStep) * qtyStep
+signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= qtyStep and strategy.position_size == 0
 
 if signal
     tradesToday += 1
@@ -101,9 +126,15 @@ if exitVwap and strategy.position_size > 0 and close < vwap
     strategy.close("GD Long", comment = "VWAP")
 if exitVwap and strategy.position_size < 0 and close > vwap
     strategy.close("GD Short", comment = "VWAP")
-if inSess and minToClose <= flatMin
-    strategy.close_all(comment = "Clôture")
+if strategy.position_size != 0 and (not inWin or minToClose <= flatMin)
+    strategy.close_all(comment = "Fin de fenêtre")
 
 plot(vwap, "VWAP", color.new(color.orange, 0), 2)
 plotshape(signal and dir == 1,  "Long",  shape.triangleup,   location.belowbar, color.new(color.lime, 0), size = size.small)
 plotshape(signal and dir == -1, "Short", shape.triangledown, location.abovebar, color.new(color.red, 0),  size = size.small)
+bgcolor(inWin ? color.new(color.blue, 94) : na, title = "Fenêtre de trading")
+
+// Aide si aucun trade : explique la cause probable
+if barstate.islastconfirmedhistory and strategy.closedtrades == 0
+    msg = not timeframe.isintraday ? "Grok Desk : passe le graphique en 5 min" : not hasVolume and actSrc == "Volume" ? "Grok Desk : ce symbole n'a pas de volume → Source d'activité = Amplitude" : "Grok Desk : aucun signal sur cet historique → baisse « Pic d'amplitude minimum » (ex. 1.6)"
+    label.new(bar_index, high, msg, style = label.style_label_down, color = color.new(color.orange, 10), textcolor = color.black)

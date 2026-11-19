@@ -23,8 +23,15 @@ export function computeMetrics(symbol, bars, prevClose) {
   const avg20 = prev20.length ? prev20.reduce((s, b) => s + b.v, 0) / prev20.length : 0;
   const barSpike = avg20 ? last.v / avg20 : null;
 
+  // Pic d'amplitude : vraie amplitude de la dernière bougie / ATR des 14 précédentes
+  const prevBars = withDay.slice(-15, -1);
+  const trOf = (b, p) => Math.max(b.h - b.l, p ? Math.abs(b.h - p.c) : 0, p ? Math.abs(b.l - p.c) : 0);
+  const atrPrev = prevBars.length > 1 ? prevBars.slice(1).reduce((s, b, i) => s + trOf(b, prevBars[i]), 0) / (prevBars.length - 1) : 0;
+  const rangeSpike = atrPrev ? trOf(last, withDay.at(-2)) / atrPrev : null;
+  const hasVolume = withDay.some((b) => b.v > 0);
+
   const pv = todayBars.reduce((s, b) => s + ((b.h + b.l + b.c) / 3) * b.v, 0);
-  const vwap = cumToday ? pv / cumToday : last.c;
+  const vwap = cumToday ? pv / cumToday : todayBars.reduce((s, b) => s + (b.h + b.l + b.c) / 3, 0) / todayBars.length;
   const recent = withDay.slice(-14);
   const atr5m = recent.reduce((s, b) => s + (b.h - b.l), 0) / recent.length;
   const ref = prevClose ?? withDay.filter((b) => b.day !== today).at(-1)?.c ?? todayBars[0].o;
@@ -35,6 +42,8 @@ export function computeMetrics(symbol, bars, prevClose) {
     changePct: round(((last.c - ref) / ref) * 100),
     relVolume: relVolume && round(relVolume),
     barSpike: barSpike && round(barSpike),
+    rangeSpike: rangeSpike && round(rangeSpike),
+    volumeKind: hasVolume ? 'réel ou ticks' : 'aucun',
     volumeToday: cumToday,
     dayHigh: round(Math.max(...todayBars.map((b) => b.h))),
     dayLow: round(Math.min(...todayBars.map((b) => b.l))),
@@ -58,11 +67,11 @@ export async function scan(watchlist, provider, rules) {
     }
   }
   const candidates = all
-    .filter((m) => m.price >= rules.minPrice && ((m.relVolume ?? 0) >= rules.minRelVolume || (m.barSpike ?? 0) >= rules.minBarSpike || /LONG|SHORT|ACHAT|VENTE/.test(m.tv?.Signal || '')))
+    .filter((m) => m.price >= rules.minPrice && ((m.relVolume ?? 0) >= rules.minRelVolume || (m.barSpike ?? 0) >= rules.minBarSpike || (m.rangeSpike ?? 0) >= (rules.minRangeSpike ?? Infinity) || /LONG|SHORT|ACHAT|VENTE/.test(m.tv?.Signal || '')))
     .sort((a, b) => score(b) - score(a))
     .slice(0, rules.maxCandidates);
   return { all, candidates };
 }
 
-const score = (m) => (m.relVolume ?? 0) + 0.5 * (m.barSpike ?? 0) + Math.abs(m.changePct) / 2;
+const score = (m) => (m.relVolume ?? 0) + 0.5 * (m.barSpike ?? 0) + (m.rangeSpike ?? 0) + Math.abs(m.changePct) / 2;
 export const round = (x, d = 2) => (x == null ? x : Math.round(x * 10 ** d) / 10 ** d);

@@ -38,7 +38,7 @@ export function evaluatePlan(plan, metrics, journal, rules, status) {
   let shares = riskPerShare ? Math.floor(riskBudget / riskPerShare) : 0;
   const maxNotional = (rules.capital * rules.maxPositionPct) / 100;
   if (shares * entry > maxNotional) shares = Math.floor(maxNotional / entry);
-  if (shares < 1) v.push('taille calculée < 1 action');
+  if (shares < 1) v.push('taille calculée < 1 unité (action/once)');
 
   return {
     ok: v.length === 0, violations: v, rr: round(rr), stopPct: round(stopPct), shares,

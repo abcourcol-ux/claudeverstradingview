@@ -49,6 +49,8 @@ export function loadConfig(env = process.env, flags = {}) {
     scanner: {
       minRelVolume: num(env.SCAN_MIN_REL_VOLUME, 2.0),
       minBarSpike: num(env.SCAN_MIN_BAR_SPIKE, 3.0),
+      // Pic d'amplitude : bougie > N × ATR. Indispensable sur l'or / le forex (pas de vrai volume).
+      minRangeSpike: num(env.SCAN_MIN_RANGE_SPIKE, 2.0),
       minPrice: num(env.SCAN_MIN_PRICE, 5),
       maxCandidates: num(env.SCAN_MAX_CANDIDATES, 3),
     },
@@ -58,7 +60,8 @@ export function loadConfig(env = process.env, flags = {}) {
       minRR: num(env.RISK_MIN_RR, 1.5),
       maxStopPct: num(env.RISK_MAX_STOP_PCT, 3),
       maxEntryDistancePct: num(env.RISK_MAX_ENTRY_DISTANCE_PCT, 1.5),
-      maxPositionPct: num(env.RISK_MAX_POSITION_PCT, 25),
+      // Exposition max en % du capital (400 = levier 4). La taille reste gouvernée par le risque par trade.
+      maxPositionPct: num(env.RISK_MAX_POSITION_PCT, 400),
       maxOpenPositions: num(env.RISK_MAX_OPEN_POSITIONS, 3),
       maxTradesPerDay: num(env.RISK_MAX_TRADES_PER_DAY, 5),
       dailyLossLimitPct: num(env.RISK_DAILY_LOSS_LIMIT_PCT, 2),
@@ -70,6 +73,8 @@ export function loadConfig(env = process.env, flags = {}) {
     // paper = journal fictif ; mt5 = ordres envoyés au terminal MetaTrader 5 (Axi), démo sauf autorisation explicite
     broker: (env.DESK_BROKER || 'paper').toLowerCase(),
     mt5: { python: env.MT5_PYTHON, symbolMap: env.MT5_SYMBOLS || '' },
+    // Symboles Yahoo équivalents (l'or spot n'a pas de volume chez Yahoo : on lit le future GC=F)
+    yahooSymbols: env.YAHOO_SYMBOLS || 'XAUUSD:GC=F,XAGUSD:SI=F,EURUSD:EURUSD=X',
     dashboard: { url: env.DESK_SYNC_URL || '', secret: env.DESK_SYNC_SECRET || '' },
     extraHolidays: list(env.DESK_EXTRA_HOLIDAYS, []),
     journalPath: env.DESK_JOURNAL_PATH || fileURLToPath(new URL('../data/journal.json', import.meta.url)),

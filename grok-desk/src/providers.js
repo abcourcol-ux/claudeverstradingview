@@ -1,10 +1,12 @@
 // Sources de données : Yahoo Finance (gratuit, sans clé) ou un marché simulé pour --mock.
 const UA = { 'User-Agent': 'Mozilla/5.0 (GrokDesk)' };
 
-export function yahooProvider() {
+export function yahooProvider({ symbolMap = '' } = {}) {
+  const map = Object.fromEntries(symbolMap.split(',').map((p) => p.split(':').map((x) => x.trim())).filter(([a, b]) => a && b).map(([a, b]) => [a.toUpperCase(), b]));
+  const ysym = (s) => map[s.toUpperCase()] || s;
   return {
     async intraday(symbol) {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=5d&includePrePost=false`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym(symbol))}?interval=5m&range=5d&includePrePost=false`;
       const r = await fetch(url, { headers: UA });
       if (!r.ok) throw new Error(`Yahoo HTTP ${r.status}`);
       const res = (await r.json()).chart?.result?.[0];
@@ -20,7 +22,7 @@ export function yahooProvider() {
       return bars.at(-1)?.c;
     },
     async news(symbol) {
-      const r = await fetch(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`, { headers: UA });
+      const r = await fetch(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ysym(symbol))}&region=US&lang=en-US`, { headers: UA });
       if (!r.ok) return [];
       const xml = await r.text();
       return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 8).map(([, it]) => ({
@@ -110,5 +112,21 @@ export async function tradingviewProvider({ timeframe = '5', count = 500, studyF
       const r = await core.capture.captureScreenshot({ region: 'chart', filename: `grokdesk_${sym}_${Date.now()}` });
       return r.file_path || r.path || r.filePath || null;
     }),
+  };
+}
+
+// Source MetaTrader 5 (Axi) : bougies 5 min et prix du courtier qui exécute. Volume = volume de ticks.
+export function mt5Provider(broker, { news } = {}) {
+  return {
+    name: 'mt5',
+    async intraday(ticker) {
+      const rates = await broker.rates(ticker, 'M5', 1500);
+      return { bars: rates.map((r) => ({ t: r.time, o: r.open, h: r.high, l: r.low, c: r.close, v: r.tick_volume })), prevClose: null };
+    },
+    async lastPrice(ticker) {
+      const i = await broker.symbolInfo(ticker);
+      return (i.bid + i.ask) / 2;
+    },
+    news: (ticker) => (news ? news(ticker) : Promise.resolve([])),
   };
 }

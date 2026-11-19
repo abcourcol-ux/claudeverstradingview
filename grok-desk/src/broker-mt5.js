@@ -66,6 +66,7 @@ export function createMt5Broker(cfg, { spawnFn = spawn } = {}) {
     account: () => call('account'),
     symbolInfo: (ticker) => call('symbol', { symbol: mapSymbol(ticker) }),
     listSymbols: (filter) => call('symbols', { filter }),
+    rates: (ticker, timeframe = 'M5', count = 1500) => call('rates', { symbol: mapSymbol(ticker), timeframe, count }),
 
     // Ouvre une position au marché avec stop et objectif attachés côté serveur.
     async open(plan, check, maxEntryDistancePct) {
@@ -77,7 +78,7 @@ export function createMt5Broker(cfg, { spawnFn = spawn } = {}) {
       const drift = (Math.abs(px - entry) / entry) * 100;
       if (drift > maxEntryDistancePct) throw new Error(`prix MT5 ${px} trop loin de l'entrée prévue ${entry} (${drift.toFixed(2)} %)`);
       const volume = sharesToLots(check.shares, info);
-      if (volume < info.volume_min) throw new Error(`taille ${check.shares} actions < minimum MT5 (${info.volume_min} lot × ${info.contract_size})`);
+      if (volume < info.volume_min) throw new Error(`taille ${check.shares} unités < minimum MT5 (${info.volume_min} lot × ${info.contract_size})`);
       const r = await call('open', { symbol, side, volume, sl: Number(plan.stop), tp: Number(plan.target), comment: `GrokDesk ${plan.ticker}` });
       return { ...r, symbol, lots: volume, shares: volume * (info.contract_size || 1) };
     },

@@ -8,6 +8,7 @@ export function pineParams(cfg) {
     RVOL_DAYS: Number(process.env.PINE_RVOL_DAYS || 5),
     MIN_REL_VOLUME: cfg.scanner.minRelVolume,
     MIN_BAR_SPIKE: cfg.scanner.minBarSpike,
+    MIN_RANGE_SPIKE: cfg.scanner.minRangeSpike,
     STOP_ATR: Number(process.env.PINE_STOP_ATR || 1.5),
     RR_TARGET: Number(process.env.PINE_RR_TARGET || 2),
     MIN_RR: cfg.risk.minRR,

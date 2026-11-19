@@ -54,7 +54,8 @@ describe('grok-desk — gestionnaire de risque', () => {
     const r = evaluatePlan(good, metrics, emptyJournal(), cfg.risk, okStatus);
     assert.equal(r.ok, true, r.violations.join());
     assert.equal(r.rr, 2);
-    assert.equal(r.shares, 62); // 0,5 % de 25 000 $ = 125 $ / 1 $ = 125, plafonné à 25 % du capital = 62
+    assert.equal(r.shares, 125); // 0,5 % de 25 000 $ = 125 $ / 1 $ de risque = 125 (exposition 12 500 $ < 400 %)
+    assert.equal(evaluatePlan(good, metrics, emptyJournal(), { ...cfg.risk, maxPositionPct: 25 }, okStatus).shares, 62); // plafond 25 %
   });
   it('refuse un R:R trop faible, un stop dans le bruit, un stop à l’envers', () => {
     assert.match(evaluatePlan({ ...good, target: 100.5 }, metrics, emptyJournal(), cfg.risk, okStatus).violations.join(), /ratio/);
@@ -187,5 +188,38 @@ describe('grok-desk — tableau de bord mobile', async () => {
     assert.deepEqual(await d.commands(), [{ id: 1, command: 'pause' }]);
     fail = true;
     assert.deepEqual(await d.commands(), []);
+  });
+});
+
+describe('grok-desk — or (XAUUSD)', async () => {
+  const { createMt5Broker } = await import('../grok-desk/src/broker-mt5.js');
+  const { mt5Provider } = await import('../grok-desk/src/providers.js');
+  it('Scanner : un pic d’amplitude déclenche même sans volume', async () => {
+    const t0 = Date.parse('2026-11-19T14:30:00Z') / 1000;
+    const bars = Array.from({ length: 40 }, (_, i) => ({ t: t0 + i * 300, o: 3700, h: 3703, l: 3697, c: 3700, v: 0 }));
+    bars.push({ t: t0 + 40 * 300, o: 3700, h: 3716, l: 3699, c: 3715, v: 0 }); // bougie de 17 $ vs ATR 6 $
+    const m = computeMetrics('XAUUSD', bars);
+    assert.ok(m.rangeSpike > 2.5, `rangeSpike ${m.rangeSpike}`);
+    assert.equal(m.volumeKind, 'aucun');
+    const provider = { intraday: async () => ({ bars }) };
+    const { candidates } = await (await import('../grok-desk/src/scanner.js')).scan(['XAUUSD'], provider, cfg.scanner);
+    assert.equal(candidates.length, 1);
+  });
+  it('Risque : taille en onces avec effet de levier (démo 4 960 $)', () => {
+    const r = evaluatePlan({ ticker: 'XAUUSD', direction: 'long', entry: 3700, stop: 3691, target: 3718 }, { price: 3700, atr5m: 6 }, emptyJournal(), { ...cfg.risk, capital: 4960 }, okStatus);
+    assert.equal(r.ok, true, r.violations.join());
+    assert.equal(r.shares, 2); // 0,5 % de 4 960 $ = 24,8 $ / 9 $ = 2 onces = 0,02 lot
+  });
+  it('MT5 : bougies converties de l’heure serveur (UTC+2) en UTC', async () => {
+    const saved = { ...process.env };
+    Object.assign(process.env, { PYTHONPATH: new URL('./fixtures/fake_mt5', import.meta.url).pathname, FAKE_MT5_TRADE_MODE: '0' });
+    const b = createMt5Broker({ symbolMap: 'XAUUSD:NVIDIA+' });
+    try {
+      await b.connect();
+      const { bars } = await mt5Provider(b).intraday('XAUUSD');
+      const lag = Date.now() / 1000 - bars.at(-1).t;
+      assert.ok(lag >= 0 && lag < 600, `dernière bougie à ${lag}s de maintenant`);
+      assert.equal(bars.length, 1500);
+    } finally { b.stop(); process.env = saved; }
   });
 });
