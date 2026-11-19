@@ -1,0 +1,188 @@
+// This source code is subject to the terms of the MIT License.
+// Structure Dow MTF — structure de marché (théorie de Dow / SMC) sur 6 unités de temps.
+//   Tendance : haussière tant que les creux protégés tiennent, baissière tant que les sommets protégés tiennent.
+//   BOS   = cassure dans le sens de la tendance (clôture au-delà du dernier swing) → continuation.
+//   CHoCH = clôture au-delà du niveau d'invalidation (sommet/creux protégé) → changement de tendance.
+//   Invalidation = extrême de la jambe qui a produit la dernière cassure.
+//   Dist. = marge avant l'invalidation en % du prix (négatif = déjà franchi, non confirmé en clôture → ⚠).
+//   Biais pondéré = Σ (tendance × poids) ; message si le 4H et le Daily se contredisent.
+// Les unités de temps supérieures sont lues sans repeindre (bougie clôturée).
+//@version=6
+indicator("Structure Dow MTF", overlay = true, max_lines_count = 200, max_labels_count = 200)
+
+swingLen = input.int(5, "Longueur des swings (bougies de chaque côté)", minval = 2, maxval = 20)
+showDraw = input.bool(true, "Dessiner BOS / CHoCH sur le graphique")
+showInv  = input.bool(true, "Afficher le niveau d'invalidation de l'UT du graphique")
+grpT = "Tableau (unité de temps et poids)"
+tf1 = input.timeframe("5",   "UT 1", inline = "1", group = grpT)
+w1  = input.int(1, "poids", inline = "1", group = grpT)
+tf2 = input.timeframe("15",  "UT 2", inline = "2", group = grpT)
+w2  = input.int(1, "poids", inline = "2", group = grpT)
+tf3 = input.timeframe("30",  "UT 3", inline = "3", group = grpT)
+w3  = input.int(1, "poids", inline = "3", group = grpT)
+tf4 = input.timeframe("60",  "UT 4", inline = "4", group = grpT)
+w4  = input.int(2, "poids", inline = "4", group = grpT)
+tf5 = input.timeframe("240", "UT 5 (comparée à l'UT 6)", inline = "5", group = grpT)
+w5  = input.int(2, "poids", inline = "5", group = grpT)
+tf6 = input.timeframe("D",   "UT 6 (fond)", inline = "6", group = grpT)
+w6  = input.int(3, "poids", inline = "6", group = grpT)
+posIn = input.string("Haut droite", "Position du tableau", options = ["Haut droite", "Haut gauche", "Bas droite", "Bas gauche"], group = grpT)
+
+// ── Moteur de structure ──
+// Retourne [tendance, typeEvt, heureEvt, invalidation, nouvelEvt, niveauCassé, barreNiveau]
+//   tendance : 1 haussier, -1 baissier, 0 indéfini ; typeEvt : 1 BOS, 2 CHoCH
+//   nouvelEvt : +1 BOS haussier, +2 CHoCH haussier, -1 BOS baissier, -2 CHoCH baissier, 0 rien
+structure(int len) =>
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    var float swingHi = na
+    var float swingLo = na
+    var int swingHiBar = na
+    var int swingLoBar = na
+    var bool hiBroken = true
+    var bool loBroken = true
+    var int trend = 0
+    var int evType = 0
+    var int evTime = na
+    var float inval = na
+    var int invalBar = na
+    var float hiSince = na
+    var int hiSinceBar = na
+    var float loSince = na
+    var int loSinceBar = na
+    if na(hiSince) or high > hiSince
+        hiSince := high
+        hiSinceBar := bar_index
+    if na(loSince) or low < loSince
+        loSince := low
+        loSinceBar := bar_index
+    if not na(ph)
+        swingHi := ph
+        swingHiBar := bar_index - len
+        hiBroken := false
+    if not na(pl)
+        swingLo := pl
+        swingLoBar := bar_index - len
+        loBroken := false
+    int newEv = 0
+    float lvl = na
+    int lvlBar = na
+    if trend >= 0 and not hiBroken and not na(swingHi) and close > swingHi
+        newEv := 1
+        lvl := swingHi
+        lvlBar := swingHiBar
+    if trend <= 0 and not loBroken and not na(swingLo) and close < swingLo
+        newEv := -1
+        lvl := swingLo
+        lvlBar := swingLoBar
+    if trend == -1 and not na(inval) and close > inval
+        newEv := 2
+        lvl := inval
+        lvlBar := invalBar
+    if trend == 1 and not na(inval) and close < inval
+        newEv := -2
+        lvl := inval
+        lvlBar := invalBar
+    if newEv != 0
+        up = newEv > 0
+        if up
+            inval := trend == 0 ? swingLo : loSince
+            invalBar := trend == 0 ? swingLoBar : loSinceBar
+        else
+            inval := trend == 0 ? swingHi : hiSince
+            invalBar := trend == 0 ? swingHiBar : hiSinceBar
+        trend := up ? 1 : -1
+        evType := math.abs(newEv)
+        evTime := time
+        hiSince := high
+        hiSinceBar := bar_index
+        loSince := low
+        loSinceBar := bar_index
+    if not na(swingHi) and close > swingHi
+        hiBroken := true
+    if not na(swingLo) and close < swingLo
+        loBroken := true
+    [trend, evType, evTime, inval, newEv, lvl, lvlBar]
+
+// Valeurs de la bougie clôturée (pas de repeinte avec lookahead_on)
+structurePrev(int len) =>
+    [t, e, tm, iv, n, l, b] = structure(len)
+    [t[1], e[1], tm[1], iv[1]]
+
+[t1, e1, m1, i1] = request.security(syminfo.tickerid, tf1, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+[t2, e2, m2, i2] = request.security(syminfo.tickerid, tf2, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+[t3, e3, m3, i3] = request.security(syminfo.tickerid, tf3, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+[t4, e4, m4, i4] = request.security(syminfo.tickerid, tf4, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+[t5, e5, m5, i5] = request.security(syminfo.tickerid, tf5, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+[t6, e6, m6, i6] = request.security(syminfo.tickerid, tf6, structurePrev(swingLen), lookahead = barmerge.lookahead_on)
+
+// ── Structure de l'unité de temps du graphique (dessins) ──
+[cT, cE, cTm, cIv, cNew, cLvl, cBar] = structure(swingLen)
+if showDraw and cNew != 0 and not na(cLvl) and not na(cBar)
+    up = cNew > 0
+    col = up ? color.teal : color.red
+    txt = (math.abs(cNew) == 2 ? "CHoCH" : "BOS") + (up ? " ▲" : " ▼")
+    line.new(cBar, cLvl, bar_index, cLvl, color = col, style = math.abs(cNew) == 2 ? line.style_solid : line.style_dashed, width = 1)
+    label.new(math.round((cBar + bar_index) / 2), cLvl, txt, style = up ? label.style_label_down : label.style_label_up, color = color.new(color.white, 100), textcolor = col, size = size.small)
+var line invLine = na
+if showInv and barstate.islast and not na(cIv)
+    line.delete(invLine)
+    invLine := line.new(bar_index - 30, cIv, bar_index + 10, cIv, color = color.orange, style = line.style_dotted, width = 2)
+
+// ── Tableau ──
+tfLabel(string tf) =>
+    s = timeframe.in_seconds(tf)
+    tf == "D" or tf == "1D" ? "Daily" : tf == "W" or tf == "1W" ? "Weekly" : s >= 3600 ? str.tostring(s / 3600) + "H" : str.tostring(s / 60) + "m"
+
+ageStr(int tm) =>
+    string res = "-"
+    if not na(tm)
+        mins = (timenow - tm) / 60000.0
+        res := mins < 60 ? str.tostring(math.floor(mins)) + "m" : mins < 1440 ? str.tostring(math.floor(mins / 60)) + "h" : str.tostring(math.floor(mins / 1440)) + "j"
+    res
+
+distPct(int tr, float iv) =>
+    na(iv) or tr == 0 ? na : (tr == 1 ? (close - iv) : (iv - close)) / close * 100
+
+// Une UT plus fine que le graphique ne peut pas être lue correctement : elle est masquée et exclue du biais
+vis(string tf) =>
+    timeframe.in_seconds(tf) >= timeframe.in_seconds(timeframe.period) ? 1 : 0
+
+pos = posIn == "Haut gauche" ? position.top_left : posIn == "Bas droite" ? position.bottom_right : posIn == "Bas gauche" ? position.bottom_left : position.top_right
+var table tb = table.new(pos, 6, 9, bgcolor = color.new(#131722, 5), border_color = color.new(color.gray, 70), border_width = 1)
+
+row(int r, string tf, int tr, int ev, int tm, float iv) =>
+    hidden = timeframe.in_seconds(tf) < timeframe.in_seconds(timeframe.period)
+    up = tr == 1
+    stCol = tr == 0 or hidden ? color.gray : up ? color.new(color.teal, 0) : color.new(color.red, 0)
+    d = distPct(tr, iv)
+    table.cell(tb, 0, r, tfLabel(tf), text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, r, hidden ? "UT < graphique" : tr == 0 ? "—" : up ? "▲ Haussier" : "▼ Baissier", bgcolor = stCol, text_color = color.white, text_size = size.small)
+    table.cell(tb, 2, r, hidden or ev == 0 ? "—" : (ev == 2 ? "CHoCH" : "BOS") + (up ? " ▲" : " ▼"), text_color = color.white, text_size = size.small)
+    table.cell(tb, 3, r, hidden ? "—" : ageStr(tm), text_color = color.silver, text_size = size.small)
+    table.cell(tb, 4, r, hidden or na(iv) ? "—" : str.tostring(iv, format.mintick), text_color = color.white, text_size = size.small)
+    table.cell(tb, 5, r, hidden or na(d) ? "—" : (d < 0 ? "⚠ " : "") + str.tostring(d, "#.##") + "%", text_color = na(d) ? color.silver : d < 0 ? color.orange : color.silver, text_size = size.small)
+
+if barstate.islast
+    hdr = array.from("TF", "Structure", "Event", "Âge", "Invalidation", "Dist.")
+    for c = 0 to 5
+        table.cell(tb, c, 0, hdr.get(c), text_color = color.gray, text_size = size.small)
+    row(1, tf1, t1, e1, m1, i1)
+    row(2, tf2, t2, e2, m2, i2)
+    row(3, tf3, t3, e3, m3, i3)
+    row(4, tf4, t4, e4, m4, i4)
+    row(5, tf5, t5, e5, m5, i5)
+    row(6, tf6, t6, e6, m6, i6)
+    score = t1 * w1 * vis(tf1) + t2 * w2 * vis(tf2) + t3 * w3 * vis(tf3) + t4 * w4 * vis(tf4) + t5 * w5 * vis(tf5) + t6 * w6 * vis(tf6)
+    total = w1 * vis(tf1) + w2 * vis(tf2) + w3 * vis(tf3) + w4 * vis(tf4) + w5 * vis(tf5) + w6 * vis(tf6)
+    table.cell(tb, 0, 7, "Biais pondéré : " + str.tostring(score) + " / " + str.tostring(total), text_color = score > 0 ? color.teal : score < 0 ? color.red : color.silver, text_size = size.small)
+    table.merge_cells(tb, 0, 7, 5, 7)
+    msg = t5 != 0 and t6 != 0 and t5 != t6 ? tfLabel(tf5) + " vs " + tfLabel(tf6) + " en conflit → réduire taille / range probable" : t5 != 0 and t5 == t6 ? tfLabel(tf5) + " et " + tfLabel(tf6) + " alignés → biais de fond " + (t6 == 1 ? "haussier" : "baissier") : "Structure de fond indéfinie"
+    table.cell(tb, 0, 8, msg, text_color = color.silver, text_size = size.tiny)
+    table.merge_cells(tb, 0, 8, 5, 8)
+
+// ── Alertes ──
+alertcondition(cNew == 2,  "CHoCH haussier", "CHoCH ▲ {{ticker}} {{interval}} à {{close}}")
+alertcondition(cNew == -2, "CHoCH baissier", "CHoCH ▼ {{ticker}} {{interval}} à {{close}}")
+alertcondition(cNew == 1,  "BOS haussier", "BOS ▲ {{ticker}} {{interval}} à {{close}}")
+alertcondition(cNew == -1, "BOS baissier", "BOS ▼ {{ticker}} {{interval}} à {{close}}")
