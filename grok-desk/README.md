@@ -19,6 +19,14 @@ En cas de GO : carte d'ordre papier dans le groupe (et capture du graphique Trad
 
 ## Installation
 
+Sous Windows, une seule commande depuis le dossier du projet fait tout : installe Node et Python, les dépendances, te pose les questions pour remplir le `.env`, détecte l'ID du groupe Telegram, vérifie MetaTrader 5, lance un essai et peut démarrer le desk à chaque ouverture de session.
+
+```bash
+powershell -ExecutionPolicy Bypass -File grok-desk\setup-windows.ps1
+```
+
+Installation manuelle :
+
 ```bash
 npm install
 ```
