@@ -2,8 +2,8 @@
 // Structure Dow MTF — structure de marché (théorie de Dow / SMC) sur 6 unités de temps.
 //   Tendance : haussière tant que les creux protégés tiennent, baissière tant que les sommets protégés tiennent.
 //   BOS   = cassure dans le sens de la tendance (clôture au-delà du dernier swing) → continuation.
-//   CHoCH = clôture au-delà du niveau d'invalidation (sommet/creux protégé) → changement de tendance.
-//   Invalidation = extrême de la jambe qui a produit la dernière cassure.
+//   CHoCH = clôture au-delà d'un swing confirmé contre la tendance → changement de tendance.
+//   Invalidation = extrême de la jambe qui a produit la dernière cassure (peut être franchie avant le CHoCH → ⚠).
 //   Dist. = marge avant l'invalidation en % du prix (négatif = déjà franchi, non confirmé en clôture → ⚠).
 //   Biais pondéré = Σ (tendance × poids) ; message si le 4H et le Daily se contredisent.
 // Les unités de temps supérieures sont lues sans repeindre (bougie clôturée).
@@ -12,8 +12,8 @@ indicator("Structure Dow MTF", overlay = true, max_lines_count = 200, max_labels
 
 swingLen = input.int(5, "Longueur des swings — UT < 1H (bougies de chaque côté)", minval = 2, maxval = 50)
 swingLenH = input.int(5, "Longueur des swings — UT ≥ 1H", minval = 2, maxval = 50)
-invMode = input.string("Origine de la jambe (fixe)", "Invalidation", options = ["Origine de la jambe (fixe)", "Dernier repli (suit les BOS)"], tooltip = "Fixe : le niveau reste au sommet/creux d'où la tendance est partie (ne bouge qu'au CHoCH). Suit les BOS : il se rapproche à chaque BOS.")
-trailing = invMode == "Dernier repli (suit les BOS)"
+chochIn = input.string("Swing confirmé", "CHoCH déclenché par", options = ["Swing confirmé", "Extrême de la jambe"], tooltip = "Swing confirmé : il faut casser en clôture un pivot confirmé ; l'invalidation peut être franchie sans changer la tendance (⚠). Extrême de la jambe : plus réactif, la tendance s'inverse dès que l'invalidation est franchie en clôture.")
+extremeChoch = chochIn == "Extrême de la jambe"
 showDraw = input.bool(true, "Dessiner BOS / CHoCH sur le graphique")
 showInv  = input.bool(true, "Afficher le niveau d'invalidation de l'UT du graphique")
 grpT = "Tableau (unité de temps et poids)"
@@ -35,7 +35,7 @@ posIn = input.string("Haut droite", "Position du tableau", options = ["Haut droi
 // Retourne [tendance, typeEvt, heureEvt, invalidation, nouvelEvt, niveauCassé, barreNiveau]
 //   tendance : 1 haussier, -1 baissier, 0 indéfini ; typeEvt : 1 BOS, 2 CHoCH
 //   nouvelEvt : +1 BOS haussier, +2 CHoCH haussier, -1 BOS baissier, -2 CHoCH baissier, 0 rien
-structure(int len, bool trail) =>
+structure(int len, bool extremeOnly) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
     var float swingHi = na
@@ -70,31 +70,34 @@ structure(int len, bool trail) =>
     int newEv = 0
     float lvl = na
     int lvlBar = na
-    if trend >= 0 and not hiBroken and not na(swingHi) and close > swingHi
-        newEv := 1
+    // Cassure d'un swing confirmé : BOS dans le sens de la tendance, CHoCH contre elle
+    if not hiBroken and not na(swingHi) and close > swingHi
+        newEv := trend == -1 ? 2 : 1
         lvl := swingHi
         lvlBar := swingHiBar
-    if trend <= 0 and not loBroken and not na(swingLo) and close < swingLo
-        newEv := -1
+    if not loBroken and not na(swingLo) and close < swingLo
+        newEv := trend == 1 ? -2 : -1
         lvl := swingLo
         lvlBar := swingLoBar
-    if trend == -1 and not na(inval) and close > inval
+    // Option plus réactive : CHoCH dès la clôture au-delà de l'extrême de la jambe
+    if extremeOnly and trend == -1 and not na(inval) and close > inval
         newEv := 2
         lvl := inval
         lvlBar := invalBar
-    if trend == 1 and not na(inval) and close < inval
+    if extremeOnly and trend == 1 and not na(inval) and close < inval
         newEv := -2
         lvl := inval
         lvlBar := invalBar
     if newEv != 0
         up = newEv > 0
-        setInv = trail or trend == 0 or math.abs(newEv) == 2
-        if setInv and up
-            inval := trend == 0 ? swingLo : loSince
-            invalBar := trend == 0 ? swingLoBar : loSinceBar
-        else if setInv
-            inval := trend == 0 ? swingHi : hiSince
-            invalBar := trend == 0 ? swingHiBar : hiSinceBar
+        if up
+            first = trend == 0 and not na(swingLo)
+            inval := first ? swingLo : loSince
+            invalBar := first ? swingLoBar : loSinceBar
+        else
+            first = trend == 0 and not na(swingHi)
+            inval := first ? swingHi : hiSince
+            invalBar := first ? swingHiBar : hiSinceBar
         trend := up ? 1 : -1
         evType := math.abs(newEv)
         evTime := time
@@ -109,22 +112,22 @@ structure(int len, bool trail) =>
     [trend, evType, evTime, inval, newEv, lvl, lvlBar]
 
 // Valeurs de la bougie clôturée (pas de repeinte avec lookahead_on)
-structurePrev(int len, bool trail) =>
-    [t, e, tm, iv, n, l, b] = structure(len, trail)
+structurePrev(int len, bool extremeOnly) =>
+    [t, e, tm, iv, n, l, b] = structure(len, extremeOnly)
     [t[1], e[1], tm[1], iv[1]]
 
 lenFor(string tf) =>
     timeframe.in_seconds(tf) >= 3600 ? swingLenH : swingLen
 
-[t1, e1, m1, i1] = request.security(syminfo.tickerid, tf1, structurePrev(lenFor(tf1), trailing), lookahead = barmerge.lookahead_on)
-[t2, e2, m2, i2] = request.security(syminfo.tickerid, tf2, structurePrev(lenFor(tf2), trailing), lookahead = barmerge.lookahead_on)
-[t3, e3, m3, i3] = request.security(syminfo.tickerid, tf3, structurePrev(lenFor(tf3), trailing), lookahead = barmerge.lookahead_on)
-[t4, e4, m4, i4] = request.security(syminfo.tickerid, tf4, structurePrev(lenFor(tf4), trailing), lookahead = barmerge.lookahead_on)
-[t5, e5, m5, i5] = request.security(syminfo.tickerid, tf5, structurePrev(lenFor(tf5), trailing), lookahead = barmerge.lookahead_on)
-[t6, e6, m6, i6] = request.security(syminfo.tickerid, tf6, structurePrev(lenFor(tf6), trailing), lookahead = barmerge.lookahead_on)
+[t1, e1, m1, i1] = request.security(syminfo.tickerid, tf1, structurePrev(lenFor(tf1), extremeChoch), lookahead = barmerge.lookahead_on)
+[t2, e2, m2, i2] = request.security(syminfo.tickerid, tf2, structurePrev(lenFor(tf2), extremeChoch), lookahead = barmerge.lookahead_on)
+[t3, e3, m3, i3] = request.security(syminfo.tickerid, tf3, structurePrev(lenFor(tf3), extremeChoch), lookahead = barmerge.lookahead_on)
+[t4, e4, m4, i4] = request.security(syminfo.tickerid, tf4, structurePrev(lenFor(tf4), extremeChoch), lookahead = barmerge.lookahead_on)
+[t5, e5, m5, i5] = request.security(syminfo.tickerid, tf5, structurePrev(lenFor(tf5), extremeChoch), lookahead = barmerge.lookahead_on)
+[t6, e6, m6, i6] = request.security(syminfo.tickerid, tf6, structurePrev(lenFor(tf6), extremeChoch), lookahead = barmerge.lookahead_on)
 
 // ── Structure de l'unité de temps du graphique (dessins) ──
-[cT, cE, cTm, cIv, cNew, cLvl, cBar] = structure(lenFor(timeframe.period), trailing)
+[cT, cE, cTm, cIv, cNew, cLvl, cBar] = structure(lenFor(timeframe.period), extremeChoch)
 if showDraw and cNew != 0 and not na(cLvl) and not na(cBar)
     up = cNew > 0
     col = up ? color.teal : color.red
