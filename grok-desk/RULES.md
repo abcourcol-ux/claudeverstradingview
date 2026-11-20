@@ -16,3 +16,9 @@ Où la règle est appliquée :
 
 À valider : la relecture du 20/11 donne +3R avec ces règles, mais deux trades n'ont survécu au SL que d'environ 1 $.
 Il faut un backtest calibré sur sept.–oct. puis vérifié sur novembre avant de passer en réel.
+
+## Banc d'essai (toujours les mêmes trades)
+Toute modification de la stratégie est d'abord rejouée sur les trades de référence :
+`python3 grok-desk/backtests/banc/bench.py` (liste dans `backtests/banc/trades-reference.json`, enrichie chaque jour
+avec les nouvelles cartes et leurs bougies M5). Une variante n'est retenue que si elle fait mieux sur le banc **et**
+sur le backtest TradingView de plusieurs semaines.

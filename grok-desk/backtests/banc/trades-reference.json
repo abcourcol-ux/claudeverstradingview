@@ -1,0 +1,11 @@
+{
+  "_doc": "Trades de référence (cartes Telegram réellement envoyées). Mêmes entrées pour tous les tests : on ne change que les règles de gestion. Heures en UTC, ATR = ATR14 5 min noté au signal.",
+  "candles": { "2026-11-20": "../xau_m5_2026-11-20_axi.txt" },
+  "trades": [
+    { "id": "20/11-1", "day": "2026-11-20", "dir": -1, "entry": 3602.92, "type": "market", "from": "2350", "atr": 9.5,  "note": "nuit, setup B" },
+    { "id": "20/11-2", "day": "2026-11-20", "dir": -1, "entry": 3593.52, "type": "market", "from": "0105", "atr": 11.5, "note": "nuit, setup B" },
+    { "id": "20/11-3", "day": "2026-11-20", "dir": -1, "entry": 3594.63, "type": "market", "from": "0115", "atr": 12.0, "note": "nuit, setup B" },
+    { "id": "20/11-4", "day": "2026-11-20", "dir": -1, "entry": 3591.00, "type": "limit",  "from": "1430", "until": "1700", "atr": 9.0, "note": "NY, vente sur rebond 3586-3596" },
+    { "id": "20/11-5", "day": "2026-11-20", "dir": -1, "entry": 3551.00, "type": "limit",  "from": "1520", "until": "1700", "atr": 9.0, "note": "NY, retest de cassure < 3552" }
+  ]
+}
