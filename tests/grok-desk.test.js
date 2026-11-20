@@ -251,6 +251,10 @@ describe('grok-desk — carte de prise de position', async () => {
     assert.equal(s.tp2, '3592.92');
     assert.match(formatSignal(s), /SL : 3607.92  \(50 pips\)[\s\S]*BE : 3602.92/);
   });
+  it('scénario conditionnel : statut EN ATTENTE', () => {
+    const s = buildSignal({ symbol: 'XAUUSD', direction: 'short', entry: 3596, slPips: 50, atr: 11, price: 3568, pending: true });
+    assert.match(formatSignal(s), /^⏳ EN ATTENTE \| XAUUSD \| 📉 VENTE/);
+  });
   it('5 niveaux de risque selon la probabilité estimée', () => {
     assert.equal(riskLevel(0.7).label, 'Peu risqué');
     assert.equal(riskLevel(0.3).label, 'Très risqué');

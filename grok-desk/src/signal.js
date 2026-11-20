@@ -29,7 +29,7 @@ export const riskLevel = (p) => RISK_LEVELS.find((l) => p >= l.min);
 
 // Construit le plan : fourchette d'entrée ± 0,25 ATR, TP1 = 1R, TP2 = 2R, TP final = cible structurelle (sinon 3R).
 // slPips : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1), prioritaire sur `stop`.
-export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, pipSize = 0.1, ...ctx }) {
+export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, pipSize = 0.1, pending = false, ...ctx }) {
   const dir = direction === 'long' ? 1 : -1;
   if (Number.isFinite(slPips)) stop = entry - dir * slPips * pipSize;
   const r = Math.abs(entry - stop);
@@ -44,7 +44,7 @@ export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, 
   const p = estimateProbability({ rr: 2, ...ctx });
   const f = (x) => round(x, decimals).toFixed(decimals);
   return {
-    symbol, direction, late, probability: p, risk: riskLevel(p), rrFinal: round(rrFinal),
+    symbol, direction, late: pending ? false : late, pending, probability: p, risk: riskLevel(p), rrFinal: round(rrFinal),
     zone: zone.map(f), stop: f(stop), tp1: f(tp1), tp2: f(tp2), tpFinal: f(tpFinal), be: f(entry),
     slPips: Math.round(r / pipSize), pipsPerR: Math.round(r / pipSize),
   };
@@ -52,7 +52,7 @@ export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, 
 
 export function formatSignal(sig, comment = '') {
   const lines = [
-    `${sig.late ? '🔴 TROP TARD' : '🟢 MAINTENANT'} | ${sig.symbol} | ${sig.direction === 'long' ? '📈 ACHAT' : '📉 VENTE'}`,
+    `${sig.pending ? '⏳ EN ATTENTE' : sig.late ? '🔴 TROP TARD' : '🟢 MAINTENANT'} | ${sig.symbol} | ${sig.direction === 'long' ? '📈 ACHAT' : '📉 VENTE'}`,
     '',
     `Entrée : ${sig.zone[0]} – ${sig.zone[1]}`,
     `SL : ${sig.stop}  (${sig.slPips} pips)`,

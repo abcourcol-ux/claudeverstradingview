@@ -18,6 +18,8 @@ atrLen    = input.int(14, "Période ATR", group = grpP)
 stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
 rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
 exitVwap  = input.bool(false, "Sortir si le prix recroise le VWAP", group = grpP)
+slFixed   = input.float(0.0, "SL fixe en $ (0 = ATR ; or : 50 pips = 5)", step = 0.5, minval = 0, group = grpP)
+thirds    = input.bool(true, "Sorties en 3 tiers : TP1 1R, TP2 2R, TP final 3R + BE après TP1", group = grpP)
 grpR = "🛡️ Risque"
 tradeSess = input.session("0930-1600", "Fenêtre de trading (heure de New York)", group = grpR)
 riskPct   = input.float(0.5, "Risque par trade (% du capital)", step = 0.1, group = grpR)  // @desk RISK_PER_TRADE_PCT
@@ -102,8 +104,9 @@ if session.isfirstbar_regular
 
 dir = unusual and close > vwap and close > open ? 1 : allowShort and unusual and close < vwap and close < open ? -1 : 0
 entryPx = close
-stopPx  = entryPx - dir * stopAtr * atr
-tgtPx   = entryPx + dir * rrTarget * stopAtr * atr
+riskDist = slFixed > 0 ? slFixed : stopAtr * atr
+stopPx  = entryPx - dir * riskDist
+tgtPx   = entryPx + dir * (thirds ? 3.0 : rrTarget) * riskDist
 riskPS  = math.abs(entryPx - stopPx)
 rr      = riskPS > 0 ? math.abs(tgtPx - entryPx) / riskPS : 0.0
 stopPc  = riskPS / entryPx * 100
@@ -113,14 +116,41 @@ qtyCap  = strategy.equity * maxPosPct / 100 / entryPx
 qty     = math.floor(math.min(qtyRisk, qtyCap) / qtyStep) * qtyStep
 signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= qtyStep and strategy.position_size == 0
 
+var float trEntry = na
+var float trRisk = na
+var int trDir = 0
+var bool tp1Done = false
+var float trQty = 0.0
+var float trQ2 = 0.0
+var float trQ3 = 0.0
+q1 = math.floor(qty / 3 / qtyStep) * qtyStep
+useThirds = thirds and q1 >= qtyStep
 if signal
     tradesToday += 1
-    if dir == 1
-        strategy.entry("GD Long", strategy.long, qty = qty)
-        strategy.exit("GD Long X", "GD Long", stop = stopPx, limit = tgtPx)
+    trEntry := entryPx
+    trRisk := riskDist
+    trDir := dir
+    tp1Done := false
+    trQty := qty
+    trQ2 := 0.0
+    trQ3 := 0.0
+    idE = dir == 1 ? "GD Long" : "GD Short"
+    strategy.entry(idE, dir == 1 ? strategy.long : strategy.short, qty = qty)
+    if useThirds
+        trQ2 := q1
+        trQ3 := qty - 2 * q1
+        strategy.exit("TP1", idE, qty = q1, stop = stopPx, limit = entryPx + dir * riskDist)
+        strategy.exit("TP2", idE, qty = trQ2, stop = stopPx, limit = entryPx + dir * 2 * riskDist)
+        strategy.exit("TPF", idE, qty = trQ3, stop = stopPx, limit = entryPx + dir * 3 * riskDist)
     else
-        strategy.entry("GD Short", strategy.short, qty = qty)
-        strategy.exit("GD Short X", "GD Short", stop = stopPx, limit = tgtPx)
+        strategy.exit("GD X", idE, stop = stopPx, limit = tgtPx)
+
+// BE : dès que TP1 est pris, le stop du reste remonte au prix d'entrée
+if thirds and trQ3 > 0 and not tp1Done and strategy.position_size != 0 and math.abs(strategy.position_size) < trQty
+    tp1Done := true
+    idE2 = trDir == 1 ? "GD Long" : "GD Short"
+    strategy.exit("TP2", idE2, qty = trQ2, stop = trEntry, limit = trEntry + trDir * 2 * trRisk)
+    strategy.exit("TPF", idE2, qty = trQ3, stop = trEntry, limit = trEntry + trDir * 3 * trRisk)
 
 if exitVwap and strategy.position_size > 0 and close < vwap
     strategy.close("GD Long", comment = "VWAP")
