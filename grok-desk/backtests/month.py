@@ -16,7 +16,12 @@ for f in sorted(glob.glob(os.path.join(H, 'data', 'c*.txt'))):
         if len(p) == 6: rows[p[0] + p[1]] = (datetime.strptime(p[0] + p[1], '%Y%m%d%H%M').replace(tzinfo=timezone.utc), *map(float, p[2:]))
 B = [rows[k] for k in sorted(rows)]
 # fenêtres : (nom, tz, début, fin) en heure locale
-WINDOWS = [w for w in [('NY', NY, (9, 30), (16, 0)), ('Nuit', PAR, (0, 30), (4, 0))] if WIN == 'both' or w[0].lower().startswith(WIN[:2])]
+TK = ZoneInfo('Asia/Tokyo')
+ALL = {'ny': [('NY', NY, (9, 30), (16, 0))], 'nuit': [('Nuit', PAR, (0, 30), (4, 0))],
+       'asie': [('Asie', TK, (9, 0), (18, 0))],      # séance asiatique : 9h–18h Tokyo = 00h–09h UTC (01h–10h Paris en hiver)
+       'tokyo': [('Tokyo', TK, (9, 0), (15, 0))]}    # bourse de Tokyo : 9h–15h Tokyo = 00h–06h UTC
+ALL['both'] = ALL['ny'] + ALL['nuit']
+WINDOWS = ALL[WIN]
 def window_of(t):
     for name, tz, a, z in WINDOWS:
         lt = t.astimezone(tz); s = lt.replace(hour=a[0], minute=a[1]); e = lt.replace(hour=z[0], minute=z[1])
@@ -78,7 +83,7 @@ print(f"Trades {len(trades)} · gagnants {len(win)} · perdants {len(loss)} · n
 eq = 0; peak = 0; dd = 0
 for x in trades: eq += x['r']; peak = max(peak, eq); dd = max(dd, peak - eq)
 print(f"Drawdown max {dd:.2f}R = {dd*25:.0f} $")
-for name in ('NY', 'Nuit'):
+for name in ('NY', 'Nuit', 'Asie', 'Tokyo'):
     s = [x for x in trades if x['w'] == name]
     if s: print(f"  {name:4} : {len(s)} trades, {sum(x['r'] for x in s):+.2f}R, gagnants {sum(1 for x in s if x['r']>0.01)}")
 for lbl, f in (('achats', 1), ('ventes', -1)):
