@@ -28,10 +28,16 @@ export function estimateProbability({ rr, backtestWinRate, biasAligned = 0, exte
 export const riskLevel = (p) => RISK_LEVELS.find((l) => p >= l.min);
 
 // Construit le plan : fourchette d'entrée ± 0,25 ATR, TP1 = 1R, TP2 = 2R, TP final = cible structurelle (sinon 3R).
-// slPips : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1), prioritaire sur `stop`.
-export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, pipSize = 0.1, pending = false, ...ctx }) {
+// Règle de SL (par ordre de priorité) :
+//   slMinPips + slAtrMult : SL = max(slMinPips pips ; slAtrMult × ATR)  ← règle du desk (50 pips ; 1,5 × ATR 5 min)
+//   slPips seul           : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1)
+//   sinon                 : `stop` fourni
+export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, slMinPips, slAtrMult, pipSize = 0.1, pending = false, ...ctx }) {
   const dir = direction === 'long' ? 1 : -1;
-  if (Number.isFinite(slPips)) stop = entry - dir * slPips * pipSize;
+  if (Number.isFinite(slMinPips) || Number.isFinite(slAtrMult)) {
+    const dist = Math.max((slMinPips ?? 0) * pipSize, (slAtrMult ?? 0) * (atr || 0));
+    stop = entry - dir * dist;
+  } else if (Number.isFinite(slPips)) stop = entry - dir * slPips * pipSize;
   const r = Math.abs(entry - stop);
   const band = 0.25 * (atr || r * 0.2);
   const tp1 = entry + dir * r;

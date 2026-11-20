@@ -2,7 +2,7 @@
 // Grok Desk — stratégie de backtest : mêmes règles que l'indicateur et que les bots de l'app,
 // exécutées dans le Strategy Tester. Graphique 5 min. Actions US (volume) ou or XAUUSD / forex (amplitude).
 //   Entrée au marché à l'ouverture de la bougie suivant le signal ; stop et objectif fixés au signal.
-//   Taille = risque % du capital / distance du stop, plafonnée par l'exposition max (effet de levier).
+//   SL = max(SL minimum, N × ATR) ; taille = risque % du capital / distance du stop. Jamais deux trades en même temps.
 //   Tout est fermé N minutes avant la fin de la fenêtre ; coupe-circuit sur perte journalière.
 //@version=6
 strategy("Grok Desk Strategy", overlay = true, initial_capital = 25000, currency = currency.USD, pyramiding = 0, commission_type = strategy.commission.cash_per_order, commission_value = 1.0, slippage = 2, margin_long = 20, margin_short = 20)  // @desk CAPITAL
@@ -18,7 +18,7 @@ atrLen    = input.int(14, "Période ATR", group = grpP)
 stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
 rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
 exitVwap  = input.bool(false, "Sortir si le prix recroise le VWAP", group = grpP)
-slFixed   = input.float(0.0, "SL fixe en $ (0 = ATR ; or : 50 pips = 5)", step = 0.5, minval = 0, group = grpP)
+slFixed   = input.float(5.0, "SL minimum en $ (or : 50 pips = 5 ; actions : 0)", step = 0.5, minval = 0, tooltip = "SL = le plus grand entre ce minimum et « Stop = N × ATR ».", group = grpP)
 thirds    = input.bool(true, "Sorties en 3 tiers : TP1 1R, TP2 2R, TP final 3R + BE après TP1", group = grpP)
 grpR = "🛡️ Risque"
 tradeSess = input.session("0930-1600", "Fenêtre de trading (heure de New York)", group = grpR)
@@ -104,7 +104,7 @@ if session.isfirstbar_regular
 
 dir = unusual and close > vwap and close > open ? 1 : allowShort and unusual and close < vwap and close < open ? -1 : 0
 entryPx = close
-riskDist = slFixed > 0 ? slFixed : stopAtr * atr
+riskDist = math.max(slFixed, stopAtr * atr)
 stopPx  = entryPx - dir * riskDist
 tgtPx   = entryPx + dir * (thirds ? 3.0 : rrTarget) * riskDist
 riskPS  = math.abs(entryPx - stopPx)

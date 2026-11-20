@@ -20,6 +20,7 @@ rangeMin  = input.float(2.0, "Pic d'amplitude minimum (× ATR)", step = 0.1, gro
 grpP = "🎯 Planificateur"
 atrLen    = input.int(14, "Période ATR", group = grpP)
 stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
+slMin     = input.float(5.0, "SL minimum en $ (or : 50 pips = 5 ; actions : 0)", step = 0.5, minval = 0, group = grpP)
 rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
 grpR = "🛡️ Risque"
 tradeSess = input.session("0930-1600", "Fenêtre de trading (heure de New York)", group = grpR)
@@ -102,8 +103,9 @@ longIdea  = unusual and close > vwap and close > open
 shortIdea = allowShort and unusual and close < vwap and close < open
 dir = longIdea ? 1 : shortIdea ? -1 : 0
 entry  = close
-stop   = entry - dir * stopAtr * atr
-target = entry + dir * rrTarget * stopAtr * atr
+riskD  = math.max(slMin, stopAtr * atr)
+stop   = entry - dir * riskD
+target = entry + dir * rrTarget * riskD
 riskPS = math.abs(entry - stop)
 rr     = riskPS > 0 ? math.abs(target - entry) / riskPS : 0.0
 stopPc = riskPS / entry * 100

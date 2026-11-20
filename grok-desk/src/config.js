@@ -62,7 +62,13 @@ export function loadConfig(env = process.env, flags = {}) {
       maxEntryDistancePct: num(env.RISK_MAX_ENTRY_DISTANCE_PCT, 1.5),
       // Exposition max en % du capital (400 = levier 4). La taille reste gouvernée par le risque par trade.
       maxPositionPct: num(env.RISK_MAX_POSITION_PCT, 400),
-      maxOpenPositions: num(env.RISK_MAX_OPEN_POSITIONS, 3),
+      // Règle de l'utilisateur : jamais deux trades en même temps
+      maxOpenPositions: num(env.RISK_MAX_OPEN_POSITIONS, 1),
+      // SL minimum : max(RISK_MIN_STOP_PIPS pips ; RISK_STOP_ATR × ATR 5 min)
+      minStopPips: num(env.RISK_MIN_STOP_PIPS, 50),
+      stopAtrMult: num(env.RISK_STOP_ATR, 1.5),
+      pipSize: num(env.RISK_PIP_SIZE, 0.1),
+      pipSymbols: list(env.RISK_PIP_SYMBOLS, ['XAUUSD', 'XAGUSD']),
       maxTradesPerDay: num(env.RISK_MAX_TRADES_PER_DAY, 5),
       dailyLossLimitPct: num(env.RISK_DAILY_LOSS_LIMIT_PCT, 2),
       noEntryFirstMinutes: num(env.RISK_NO_ENTRY_FIRST_MIN, 15),

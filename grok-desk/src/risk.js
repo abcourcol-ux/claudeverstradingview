@@ -17,14 +17,17 @@ export function evaluatePlan(plan, metrics, journal, rules, status) {
   const stopPct = (riskPerShare / entry) * 100;
   if (rr < rules.minRR) v.push(`ratio gain/risque ${round(rr)} < ${rules.minRR} minimum`);
   if (stopPct > rules.maxStopPct) v.push(`stop à ${round(stopPct)} % de l'entrée (> ${rules.maxStopPct} % max)`);
-  if (metrics?.atr5m && riskPerShare < 0.5 * metrics.atr5m) v.push(`stop dans le bruit : ${round(riskPerShare)} $ < 0,5 × ATR 5 min (${metrics.atr5m} $)`);
+  // Règle du desk : SL ≥ max(minStopPips pips ; stopAtrMult × ATR 5 min) — un stop plus serré saute sur le bruit
+  const pipRule = (rules.pipSymbols ?? ['XAUUSD', 'XAGUSD']).includes(String(plan.ticker || '').toUpperCase());
+  const minStop = Math.max(pipRule ? (rules.minStopPips ?? 0) * (rules.pipSize ?? 0.1) : 0, (rules.stopAtrMult ?? 0.5) * (metrics?.atr5m || 0));
+  if (minStop > 0 && riskPerShare < minStop - 1e-9) v.push(`stop trop serré : ${round(riskPerShare)} $ < minimum ${round(minStop)} $ (${pipRule ? `max(${rules.minStopPips ?? 0} pips ; ` : '('}${rules.stopAtrMult ?? 0.5} × ATR 5 min))`);
   if (metrics?.price) {
     const dist = (Math.abs(entry - metrics.price) / metrics.price) * 100;
     if (dist > rules.maxEntryDistancePct) v.push(`entrée à ${round(dist)} % du prix actuel (> ${rules.maxEntryDistancePct} %)`);
   }
 
   const open = journal.positions.filter((p) => p.status !== 'closed');
-  if (open.length >= rules.maxOpenPositions) v.push(`déjà ${open.length} positions ouvertes (max ${rules.maxOpenPositions})`);
+  if (open.length >= rules.maxOpenPositions) v.push(rules.maxOpenPositions === 1 ? `un trade est déjà en cours (${open.map((p) => p.ticker).join(', ')}) : jamais deux trades en même temps` : `déjà ${open.length} positions ouvertes (max ${rules.maxOpenPositions})`);
   if (open.some((p) => p.ticker === plan.ticker)) v.push(`déjà une position sur ${plan.ticker}`);
   if (journal.tradesToday >= rules.maxTradesPerDay) v.push(`quota de ${rules.maxTradesPerDay} trades/jour atteint`);
   const lossLimit = (rules.capital * rules.dailyLossLimitPct) / 100;

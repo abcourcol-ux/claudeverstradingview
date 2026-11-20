@@ -59,7 +59,7 @@ describe('grok-desk — gestionnaire de risque', () => {
   });
   it('refuse un R:R trop faible, un stop dans le bruit, un stop à l’envers', () => {
     assert.match(evaluatePlan({ ...good, target: 100.5 }, metrics, emptyJournal(), cfg.risk, okStatus).violations.join(), /ratio/);
-    assert.match(evaluatePlan({ ...good, stop: 99.9, target: 100.3 }, metrics, emptyJournal(), cfg.risk, okStatus).violations.join(), /bruit/);
+    assert.match(evaluatePlan({ ...good, stop: 99.9, target: 100.3 }, metrics, emptyJournal(), cfg.risk, okStatus).violations.join(), /trop serré/);
     assert.equal(evaluatePlan({ ...good, stop: 101 }, metrics, emptyJournal(), cfg.risk, okStatus).ok, false);
   });
   it('refuse près de la clôture et après la limite de perte du jour', () => {
@@ -205,6 +205,14 @@ describe('grok-desk — or (XAUUSD)', async () => {
     const { candidates } = await (await import('../grok-desk/src/scanner.js')).scan(['XAUUSD'], provider, cfg.scanner);
     assert.equal(candidates.length, 1);
   });
+  it('Risque : jamais deux trades en même temps, SL or ≥ 50 pips', () => {
+    const j = emptyJournal();
+    j.state.positions.push({ ticker: 'XAUUSD', status: 'open' });
+    const plan = { ticker: 'XAUUSD', direction: 'short', entry: 3600, stop: 3615, target: 3570 };
+    assert.match(evaluatePlan(plan, { price: 3600, atr5m: 9 }, j, cfg.risk, okStatus).violations.join(), /jamais deux trades/);
+    const tight = evaluatePlan({ ...plan, stop: 3603 }, { price: 3600, atr5m: 1 }, emptyJournal(), cfg.risk, okStatus);
+    assert.match(tight.violations.join(), /trop serré : 3 \$ < minimum 5 \$/);
+  });
   it('Risque : taille en onces avec effet de levier (démo 4 960 $)', () => {
     const r = evaluatePlan({ ticker: 'XAUUSD', direction: 'long', entry: 3700, stop: 3691, target: 3718 }, { price: 3700, atr5m: 6 }, emptyJournal(), { ...cfg.risk, capital: 4960 }, okStatus);
     assert.equal(r.ok, true, r.violations.join());
@@ -254,6 +262,12 @@ describe('grok-desk — carte de prise de position', async () => {
   it('scénario conditionnel : statut EN ATTENTE', () => {
     const s = buildSignal({ symbol: 'XAUUSD', direction: 'short', entry: 3596, slPips: 50, atr: 11, price: 3568, pending: true });
     assert.match(formatSignal(s), /^⏳ EN ATTENTE \| XAUUSD \| 📉 VENTE/);
+  });
+  it('règle du desk : SL = max(50 pips ; 1,5 × ATR)', () => {
+    const big = buildSignal({ symbol: 'XAUUSD', direction: 'short', entry: 3593.52, slMinPips: 50, slAtrMult: 1.5, atr: 11.5 });
+    assert.equal(big.stop, '3610.77'); // 1,5 × 11,5 = 17,25 $ > 5 $
+    const calm = buildSignal({ symbol: 'XAUUSD', direction: 'long', entry: 3600, slMinPips: 50, slAtrMult: 1.5, atr: 2 });
+    assert.equal(calm.stop, '3595.00'); // marché calme : le plancher de 50 pips s'applique
   });
   it('5 niveaux de risque selon la probabilité estimée', () => {
     assert.equal(riskLevel(0.7).label, 'Peu risqué');
