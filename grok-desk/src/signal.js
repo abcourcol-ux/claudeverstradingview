@@ -28,8 +28,10 @@ export function estimateProbability({ rr, backtestWinRate, biasAligned = 0, exte
 export const riskLevel = (p) => RISK_LEVELS.find((l) => p >= l.min);
 
 // Construit le plan : fourchette d'entrée ± 0,25 ATR, TP1 = 1R, TP2 = 2R, TP final = cible structurelle (sinon 3R).
-export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, ...ctx }) {
+// slPips : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1), prioritaire sur `stop`.
+export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, pipSize = 0.1, ...ctx }) {
   const dir = direction === 'long' ? 1 : -1;
+  if (Number.isFinite(slPips)) stop = entry - dir * slPips * pipSize;
   const r = Math.abs(entry - stop);
   const band = 0.25 * (atr || r * 0.2);
   const tp1 = entry + dir * r;
@@ -43,7 +45,8 @@ export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, 
   const f = (x) => round(x, decimals).toFixed(decimals);
   return {
     symbol, direction, late, probability: p, risk: riskLevel(p), rrFinal: round(rrFinal),
-    zone: zone.map(f), stop: f(stop), tp1: f(tp1), tp2: f(tp2), tpFinal: f(tpFinal),
+    zone: zone.map(f), stop: f(stop), tp1: f(tp1), tp2: f(tp2), tpFinal: f(tpFinal), be: f(entry),
+    slPips: Math.round(r / pipSize), pipsPerR: Math.round(r / pipSize),
   };
 }
 
@@ -52,10 +55,11 @@ export function formatSignal(sig, comment = '') {
     `${sig.late ? '🔴 TROP TARD' : '🟢 MAINTENANT'} | ${sig.symbol} | ${sig.direction === 'long' ? '📈 ACHAT' : '📉 VENTE'}`,
     '',
     `Entrée : ${sig.zone[0]} – ${sig.zone[1]}`,
-    `SL : ${sig.stop}`,
-    `TP1 : ${sig.tp1}  (1R)`,
-    `TP2 : ${sig.tp2}  (2R)`,
-    `TP final : ${sig.tpFinal}  (${sig.rrFinal}R)`,
+    `SL : ${sig.stop}  (${sig.slPips} pips)`,
+    `BE : ${sig.be}  (SL remonté à l'entrée dès TP1)`,
+    `TP1 : ${sig.tp1}  (1R · ${sig.pipsPerR} pips)`,
+    `TP2 : ${sig.tp2}  (2R · ${2 * sig.pipsPerR} pips)`,
+    `TP final : ${sig.tpFinal}  (${sig.rrFinal}R · ${Math.round(sig.rrFinal * sig.pipsPerR)} pips)`,
     `Risque : ${sig.risk.icon} ${sig.risk.label} — réussite estimée ${Math.round(sig.probability * 100)} %`,
   ];
   if (comment) lines.push('', `💬 ${comment}`);

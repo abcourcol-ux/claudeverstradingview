@@ -2,7 +2,7 @@
 // Envoie une carte de prise de position sur Telegram (sans passer par le desk complet).
 //   node grok-desk/src/notify.js '{"symbol":"XAUUSD","direction":"short","entry":3690,"stop":3700,"finalTarget":3660,"atr":5,"price":3689}' --comment "…" [--id 1] [--dry-run]
 //   node grok-desk/src/notify.js --text "message libre" [--id 1]
-// --id N ajoute sous le message des boutons 🛑 SL / 🎯 TP1 / 🎯 TP2 / 🏁 TP final (lus ensuite par tg-inbox.js).
+// --id N ajoute sous le message des boutons 🛑 SL / ⚖️ BE / 🎯 TP1 / 🎯 TP2 / 🏁 TP final (lus ensuite par tg-inbox.js).
 // Champs optionnels : backtestWinRate, biasAligned (-1..1), extended, newsSoon, againstHtf.
 // Utilise TELEGRAM_TOKEN_CHEF (ou TELEGRAM_TOKEN) et TELEGRAM_CHAT_ID du .env.
 import { fileURLToPath } from 'url';
@@ -18,7 +18,7 @@ const opt = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 
 const text = opt('text') ?? formatSignal(buildSignal(JSON.parse(args[0])), opt('comment') || '');
 const tradeId = opt('id');
 const replyMarkup = tradeId ? { inline_keyboard: [
-  [{ text: '🛑 SL', callback_data: `${tradeId}:sl` }, { text: '🎯 TP1', callback_data: `${tradeId}:tp1` }],
+  [{ text: '🛑 SL', callback_data: `${tradeId}:sl` }, { text: '⚖️ BE', callback_data: `${tradeId}:be` }, { text: '🎯 TP1', callback_data: `${tradeId}:tp1` }],
   [{ text: '🎯 TP2', callback_data: `${tradeId}:tp2` }, { text: '🏁 TP final', callback_data: `${tradeId}:tpf` }],
 ] } : undefined;
 // Token : .env du desk, sinon celui enregistré par /telegram:configure

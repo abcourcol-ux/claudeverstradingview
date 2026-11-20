@@ -235,13 +235,21 @@ describe('grok-desk — carte de prise de position', async () => {
     assert.equal(s.tpFinal, '3655.00');
     const txt = formatSignal(s, 'Rejet de la zone 0,5');
     assert.match(txt, /^🟢 MAINTENANT \| XAUUSD \| 📉 VENTE/);
-    assert.match(txt, /SL : 3700.00/);
+    assert.match(txt, /SL : 3700.00  \(100 pips\)/);
+    assert.match(txt, /BE : 3690.00/);
     assert.match(txt, /💬 Rejet de la zone 0,5/);
   });
   it('TROP TARD quand le prix a déjà quitté la fourchette vers l’objectif', () => {
     const s = buildSignal({ symbol: 'XAUUSD', direction: 'long', entry: 3690, stop: 3680, atr: 6, price: 3697 });
     assert.equal(s.late, true);
     assert.match(formatSignal(s), /^🔴 TROP TARD/);
+  });
+  it('SL fixe de 50 pips sur l’or (5 $) et TP en pips', () => {
+    const s = buildSignal({ symbol: 'XAUUSD', direction: 'short', entry: 3602.92, slPips: 50, atr: 9.5, price: 3602.9 });
+    assert.equal(s.stop, '3607.92');
+    assert.equal(s.tp1, '3597.92');
+    assert.equal(s.tp2, '3592.92');
+    assert.match(formatSignal(s), /SL : 3607.92  \(50 pips\)[\s\S]*BE : 3602.92/);
   });
   it('5 niveaux de risque selon la probabilité estimée', () => {
     assert.equal(riskLevel(0.7).label, 'Peu risqué');
