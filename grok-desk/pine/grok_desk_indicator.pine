@@ -19,11 +19,11 @@ spikeMin  = input.float(3.0, "Pic de volume minimum (× moyenne 20)", step = 0.1
 rangeMin  = input.float(2.0, "Pic d'amplitude minimum (× ATR)", step = 0.1, group = grpS)  // @desk MIN_RANGE_SPIKE
 grpP = "🎯 Planificateur"
 atrLen    = input.int(14, "Période ATR", group = grpP)
-stopAtr   = input.float(1.5, "Stop = N × ATR", step = 0.1, group = grpP)  // @desk STOP_ATR
-slMin     = input.float(5.0, "SL minimum en $ (or : 50 pips = 5 ; actions : 0)", step = 0.5, minval = 0, group = grpP)
+stopAtr   = input.float(0.0, "Stop = N × ATR (0 = SL fixe)", step = 0.1, group = grpP)  // @desk STOP_ATR
+slMin     = input.float(5.0, "SL en $ (or : 50 pips = 5)", step = 0.5, minval = 0, group = grpP)
 rrTarget  = input.float(2.0, "Objectif = R:R", step = 0.1, group = grpP)  // @desk RR_TARGET
 grpR = "🛡️ Risque"
-tradeSess = input.session("0930-1600", "Fenêtre de trading (heure de New York)", group = grpR)
+tradeSess = input.session("1830-2200", "Fenêtre de trading (heure de New York ; 1830-2200 = 00h30-04h Paris)", group = grpR)
 minRR     = input.float(1.5, "R:R minimum", step = 0.1, group = grpR)  // @desk MIN_RR
 maxStopPc = input.float(3.0, "Stop max (% de l'entrée)", step = 0.1, group = grpR)  // @desk MAX_STOP_PCT
 noFirst   = input.int(15, "Pas d'entrée les N premières minutes", group = grpR)  // @desk NO_ENTRY_FIRST_MIN

@@ -42,7 +42,7 @@ for i, (t, o, h, l, c) in enumerate(B):
     w, since, toclose = window_of(t)
     # gestion de la position ouverte
     if pos and i >= pos['fill']:
-        if i == pos['fill']: pos['e'] = o
+        if i == pos['fill']: pos['e'] = o; pos['tfill'] = t
         d = pos['d']
         pts = ([o, h, l, c] if d < 0 else [o, l, h, c]) if PRUDENT else ([o, h, l, c] if abs(o - h) < abs(o - l) else [o, l, h, c])
         done = None
@@ -68,7 +68,7 @@ for i, (t, o, h, l, c) in enumerate(B):
         if done:
             pos['out'] = done; pos['t1'] = t; day_r += pos['r']; trades.append(pos); pos = None
         prev = (t, o, h, l, c); continue
-    if pos is None and w and atr_prev and since >= 15 and toclose >= 45 and day_n < 5 and day_r > -4 and i + 1 < len(B):
+    if pos is None and w and atr_prev and since >= 15 and toclose >= 45 and day_n < 5 and day_r > -4 and (i + 1 < len(B) or '--json' in A):
         rs = tr / atr_prev
         d = 1 if (rs >= RANGE_MIN and c > vwap and c > o) else -1 if (rs >= RANGE_MIN and c < vwap and c < o) else 0
         if d and abs(c - vwap) <= EXT * atr:
@@ -93,3 +93,13 @@ if '--list' in A:
     for x in trades:
         lt = x['t'].astimezone(PAR)
         print(f"{lt:%a %d/%m %H:%M} Paris  {x['w']:4} {'ACHAT' if x['d']>0 else 'VENTE'}  entrée {x['e']:.2f}  SL {x['e0']-x['d']*x['R']:.2f} ({x['R']*10:.0f} pips)  TP1 {x['e0']+x['d']*x['R']:.2f}  → {x['out']:22} {x['r']:+.2f}R")
+
+if '--json' in A:  # mode direct : état pour le test papier
+    import json as _j
+    def ser(x, st):
+        d = {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in x.items() if k != 'fill'}
+        d['status'] = st; d['sl'] = round(x['e0'] - x['d'] * x['R'], 2); d['tp1'] = round(x['e0'] + x['d'] * x['R'], 2)
+        d['tp2'] = round(x['e0'] + 2 * x['d'] * x['R'], 2); d['tpf'] = round(x['e0'] + 3 * x['d'] * x['R'], 2); return d
+    out = [ser(x, 'closed') for x in trades]
+    if pos: out.append(ser(pos, 'open' if 'tfill' in pos else 'pending'))
+    print('JSON' + _j.dumps({'last': B[-1][0].isoformat(), 'price': B[-1][4], 'atr': atr, 'trades': out}))

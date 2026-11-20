@@ -29,8 +29,8 @@ export const riskLevel = (p) => RISK_LEVELS.find((l) => p >= l.min);
 
 // Construit le plan : fourchette d'entrée ± 0,25 ATR, TP1 = 1R, TP2 = 2R, TP final = cible structurelle (sinon 3R).
 // Règle de SL (par ordre de priorité) :
-//   slMinPips + slAtrMult : SL = max(slMinPips pips ; slAtrMult × ATR)  ← règle du desk (50 pips ; 1,5 × ATR 5 min)
-//   slPips seul           : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1)
+//   slMinPips + slAtrMult : SL = max(slMinPips pips ; slAtrMult × ATR)
+//   slPips seul           : SL fixe en pips (or : 1 pip = 0,10 $ → pipSize 0.1)  ← règle du desk : slPips 50
 //   sinon                 : `stop` fourni
 export function buildSignal({ symbol, direction, entry, stop, finalTarget, atr, price, decimals = 2, slPips, slMinPips, slAtrMult, pipSize = 0.1, pending = false, ...ctx }) {
   const dir = direction === 'long' ? 1 : -1;

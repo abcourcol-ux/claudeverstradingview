@@ -212,6 +212,9 @@ describe('grok-desk — or (XAUUSD)', async () => {
     assert.match(evaluatePlan(plan, { price: 3600, atr5m: 9 }, j, cfg.risk, okStatus).violations.join(), /jamais deux trades/);
     const tight = evaluatePlan({ ...plan, stop: 3603 }, { price: 3600, atr5m: 1 }, emptyJournal(), cfg.risk, okStatus);
     assert.match(tight.violations.join(), /trop serré : 3 \$ < minimum 5 \$/);
+    // or : SL fixe 50 pips accepté même quand l'ATR est grand (règle validée sept.–nov.)
+    const fixed = evaluatePlan({ ...plan, stop: 3605, target: 3585 }, { price: 3600, atr5m: 12 }, emptyJournal(), cfg.risk, okStatus);
+    assert.equal(fixed.violations.some((v) => /trop serré/.test(v)), false, fixed.violations.join());
   });
   it('Risque : taille en onces avec effet de levier (démo 4 960 $)', () => {
     const r = evaluatePlan({ ticker: 'XAUUSD', direction: 'long', entry: 3700, stop: 3691, target: 3718 }, { price: 3700, atr5m: 6 }, emptyJournal(), { ...cfg.risk, capital: 4960 }, okStatus);

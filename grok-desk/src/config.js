@@ -64,7 +64,7 @@ export function loadConfig(env = process.env, flags = {}) {
       maxPositionPct: num(env.RISK_MAX_POSITION_PCT, 400),
       // Règle de l'utilisateur : jamais deux trades en même temps
       maxOpenPositions: num(env.RISK_MAX_OPEN_POSITIONS, 1),
-      // SL minimum : max(RISK_MIN_STOP_PIPS pips ; RISK_STOP_ATR × ATR 5 min)
+      // SL : or/argent = RISK_MIN_STOP_PIPS pips (50) ; actions = au moins RISK_STOP_ATR × ATR 5 min
       minStopPips: num(env.RISK_MIN_STOP_PIPS, 50),
       stopAtrMult: num(env.RISK_STOP_ATR, 1.5),
       pipSize: num(env.RISK_PIP_SIZE, 0.1),
