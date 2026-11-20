@@ -14,7 +14,7 @@ Où la règle est appliquée :
 - Desk (Gestionnaire de risque) : `minStopPips`, `stopAtrMult`, `maxOpenPositions: 1` (`src/config.js`, `src/risk.js`)
 - TradingView : indicateur « Grok Desk » v4.0 (`SL minimum en $` = 5) et « Grok Desk Strategy » v3.0 (`pyramiding = 0`, pas de nouvelle entrée tant qu'une position est ouverte)
 
-À valider : la relecture du 20/11 donne +3R avec ces règles, mais deux trades n'ont survécu au SL que d'environ 1 $.
+À valider : sur le banc du 20/11 (relecture bougie par bougie, une position à la fois) ces règles donnent +1,33R.
 Il faut un backtest calibré sur sept.–oct. puis vérifié sur novembre avant de passer en réel.
 
 ## Banc d'essai (toujours les mêmes trades)
