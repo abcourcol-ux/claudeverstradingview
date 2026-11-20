@@ -1,24 +1,28 @@
-# Règles du desk — XAUUSD (à jour du 20/11/2026)
+# Règles du desk — XAUUSD (à jour du 20/11/2026, validées sur sept.–nov.)
 
 | Règle | Valeur |
 |---|---|
-| Stop (SL) | **max(50 pips ; 1,5 × ATR 5 min)** — or : 1 pip = 0,10 $, donc 50 pips = 5 $ |
-| Risque par trade | 25 $ fixe : la taille s'adapte à la distance du SL |
-| TP1 / TP2 / TP final | 1R / 2R / 3R (ou cible de structure si plus loin que 2R), sortie par tiers |
+| Fenêtre | **00h30–04h Paris uniquement** (la séance de New York perd sur les backtests) |
+| Signal | bougie 5 min d'amplitude ≥ 2 × ATR14, clôture du côté du VWAP de séance, refus si > 3 ATR du VWAP |
+| Entrée | ouverture de la bougie suivante (fourchette ± 0,25 ATR sur la carte) |
+| Stop (SL) | **50 pips fixe** (5 $ sur l'or) |
+| TP1 / TP2 / TP final | 1R / 2R / 3R, sortie par tiers ; tout ce qui reste est clôturé à 04h |
 | BE | SL remonté au prix d'entrée dès TP1 touché |
-| Positions simultanées | **1 seule : jamais deux trades en même temps** |
-| Fenêtre | Session de New York (9h30–16h NY) ; test de nuit 00h30–04h Paris |
+| Risque | 25 $ par trade : taille = 25 $ / 5 $ = 5 onces (0,05 lot) |
+| Positions simultanées | 1 seule, jamais deux trades en même temps ; 5 trades max par nuit |
+
+Résultats (bougies Axi M5, comptage prudent, spread non compté ≈ −0,03R/trade) :
+septembre (hors échantillon) +12,1R sur 42 trades · 20/10–20/11 +5,3R sur 32 trades · total +17,4R, PF 1,65, drawdown max 4R.
+Détail : `backtests/2026-09-validation-nuit.md`. Le SL en ATR et le filtre 2 ATR ont été écartés (sur-optimisés).
 
 Où la règle est appliquée :
-- Cartes Telegram : `buildSignal({ slMinPips: 50, slAtrMult: 1.5, ... })` (`src/signal.js`)
-- Desk (Gestionnaire de risque) : `minStopPips`, `stopAtrMult`, `maxOpenPositions: 1` (`src/config.js`, `src/risk.js`)
-- TradingView : indicateur « Grok Desk » v4.0 (`SL minimum en $` = 5) et « Grok Desk Strategy » v3.0 (`pyramiding = 0`, pas de nouvelle entrée tant qu'une position est ouverte)
+- Test papier de nuit : `forward-test/night_pass.py` (cartes Telegram, journal `forward-test/AAAA-MM-JJ-nuit-papier.md`)
+- Desk (Gestionnaire de risque) : or = SL ≥ 50 pips, une position à la fois (`src/config.js`, `src/risk.js`)
+- Pine : « Grok Desk » / « Grok Desk Strategy » — SL 5 $, Stop ATR 0, fenêtre 1830-2200 heure de NY (= 00h30–04h Paris)
 
-À valider : sur le banc du 20/11 (relecture bougie par bougie, une position à la fois) ces règles donnent +1,33R.
-Il faut un backtest calibré sur sept.–oct. puis vérifié sur novembre avant de passer en réel.
+Étapes suivantes : forward test papier plusieurs nuits → démo Axi (chaque ordre confirmé par l'utilisateur) → réel seulement si les deux sont concluants.
 
-## Banc d'essai (toujours les mêmes trades)
-Toute modification de la stratégie est d'abord rejouée sur les trades de référence :
-`python3 grok-desk/backtests/banc/bench.py` (liste dans `backtests/banc/trades-reference.json`, enrichie chaque jour
-avec les nouvelles cartes et leurs bougies M5). Une variante n'est retenue que si elle fait mieux sur le banc **et**
-sur le backtest TradingView de plusieurs semaines.
+## Banc d'essai (toujours les mêmes données)
+Toute modification est rejouée sur les mêmes données avant d'être adoptée :
+`python3 grok-desk/backtests/month.py --data data_sep --window nuit --prudent --pips 50 --k 0` (septembre) et `--data data` (20/10–20/11),
+ainsi que `backtests/banc/bench.py` (cartes du 20/11). Une variante n'est retenue que si elle gagne sur les **deux** périodes.
