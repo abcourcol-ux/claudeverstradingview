@@ -10,7 +10,7 @@ K = arg('--k', 1.5); PIPS = arg('--pips', 50.0); PRUDENT = '--prudent' in A; BE 
 WIN = arg('--window', 'both'); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
 NY, PAR = ZoneInfo('America/New_York'), ZoneInfo('Europe/Paris')
 rows = {}
-for f in sorted(glob.glob(os.path.join(H, 'data', 'c*.txt'))):
+for f in sorted(glob.glob(os.path.join(H, arg('--data', 'data'), '*.txt'))):
     for l in open(f):
         p = l.split()
         if len(p) == 6: rows[p[0] + p[1]] = (datetime.strptime(p[0] + p[1], '%Y%m%d%H%M').replace(tzinfo=timezone.utc), *map(float, p[2:]))
