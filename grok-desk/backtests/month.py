@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 H = os.path.dirname(os.path.abspath(__file__)); A = sys.argv
 def arg(n, d): return type(d)(A[A.index(n) + 1]) if n in A else d
 K = arg('--k', 1.5); PIPS = arg('--pips', 50.0); PRUDENT = '--prudent' in A; BE = '--nobe' not in A
-WIN = arg('--window', 'both'); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
+WIN = arg('--window', 'both'); BEAFTER = arg('--beafter', 1); BEOFF = arg('--beoff', 0.0); TPN = arg('--tpn', 3); MAXDAY = arg('--maxday', 5); MAXSL = arg('--maxsl', 99); TREND = arg('--trend', 0); CWIN = arg('--win', ''); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
 NY, PAR = ZoneInfo('America/New_York'), ZoneInfo('Europe/Paris')
 rows = {}
 for f in sorted(f for d in arg('--data', 'data').split(',') for f in glob.glob(os.path.join(H, d, '*.txt'))):
@@ -21,7 +21,7 @@ ALL = {'ny': [('NY', NY, (9, 30), (16, 0))], 'nuit': [('Nuit', PAR, (0, 30), (4,
        'asie': [('Asie', TK, (9, 0), (18, 0))],      # séance asiatique : 9h–18h Tokyo = 00h–09h UTC (01h–10h Paris en hiver)
        'tokyo': [('Tokyo', TK, (9, 0), (15, 0))]}    # bourse de Tokyo : 9h–15h Tokyo = 00h–06h UTC
 ALL['both'] = ALL['ny'] + ALL['nuit']
-WINDOWS = ALL[WIN]
+WINDOWS = ALL[WIN] if not CWIN else [('Nuit', PAR, (int(CWIN[:2]), int(CWIN[2:4])), (int(CWIN[5:7]), int(CWIN[7:9])))]
 def window_of(t):
     for name, tz, a, z in WINDOWS:
         lt = t.astimezone(tz); s = lt.replace(hour=a[0], minute=a[1]); e = lt.replace(hour=z[0], minute=z[1])
@@ -37,7 +37,8 @@ for i, (t, o, h, l, c) in enumerate(B):
     if atr is None:
         if len(trs) == 14: atr = sum(trs) / 14
     else: atr = (atr * 13 + tr) / 14
-    if newsess: sumpx = 0; npx = 0; day_n = 0; day_r = 0.0; sess = t
+    if newsess: sumpx = 0; npx = 0; day_n = 0; day_r = 0.0; day_sl = 0; sess = t
+    ema = c if i == 0 else ema + 2 / (TREND + 1) * (c - ema) if TREND else 0
     sumpx += (h + l + c) / 3; npx += 1; vwap = sumpx / npx
     w, since, toclose = window_of(t)
     # gestion de la position ouverte
@@ -50,27 +51,28 @@ for i, (t, o, h, l, c) in enumerate(B):
             while not done:
                 lo, hi = min(a, z), max(a, z); ev = []
                 if lo <= pos['st'] <= hi: ev.append((abs(pos['st'] - a), 'sl', pos['st']))
-                if pos['hit'] < 3:
+                if pos['hit'] < TPN:
                     tp = pos['e0'] + d * (pos['hit'] + 1) * pos['R']
                     if lo <= tp <= hi: ev.append((abs(tp - a), 'tp', tp))
                 if not ev: break
                 ev.sort(); _, k, p = ev[0]
                 if k == 'sl':
-                    pos['r'] += (3 - pos['hit']) / 3 * d * (p - pos['e']) / pos['R']; done = 'SL' if pos['hit'] == 0 else ('BE' if BE else 'SL') + f" après TP{pos['hit']}"
+                    pos['r'] += (TPN - pos['hit']) / TPN * d * (p - pos['e']) / pos['R']; done = 'SL' if pos['hit'] == 0 else ('BE' if BE else 'SL') + f" après TP{pos['hit']}"
                 else:
-                    pos['hit'] += 1; pos['r'] += d * (p - pos['e']) / pos['R'] / 3
-                    if pos['hit'] == 1 and BE: pos['st'] = pos['e0']
-                    if pos['hit'] == 3: done = 'TP final'
+                    pos['hit'] += 1; pos['r'] += d * (p - pos['e']) / pos['R'] / TPN
+                    if pos['hit'] == BEAFTER and BE: pos['st'] = pos['e0'] - d * BEOFF
+                    if pos['hit'] == TPN: done = 'TP final'
                 a = p
             if done: break
         if not done and (w != pos['w'] or toclose <= 5):
-            pos['r'] += (3 - pos['hit']) / 3 * d * (c - pos['e']) / pos['R']; done = f"fin de fenêtre ({pos['hit']} TP)"
+            pos['r'] += (TPN - pos['hit']) / TPN * d * (c - pos['e']) / pos['R']; done = f"fin de fenêtre ({pos['hit']} TP)"
         if done:
-            pos['out'] = done; pos['t1'] = t; day_r += pos['r']; trades.append(pos); pos = None
+            pos['out'] = done; pos['t1'] = t; day_r += pos['r']; day_sl += pos['r'] < -0.5; trades.append(pos); pos = None
         prev = (t, o, h, l, c); continue
-    if pos is None and w and atr_prev and since >= 15 and toclose >= 45 and day_n < 5 and day_r > -4 and (i + 1 < len(B) or '--json' in A):
+    if pos is None and w and atr_prev and since >= 15 and toclose >= 45 and day_n < MAXDAY and day_r > -4 and day_sl < MAXSL and (i + 1 < len(B) or '--json' in A):
         rs = tr / atr_prev
         d = 1 if (rs >= RANGE_MIN and c > vwap and c > o) else -1 if (rs >= RANGE_MIN and c < vwap and c < o) else 0
+        if TREND and d and d * (c - ema) < 0: d = 0  # filtre de tendance : seulement dans le sens de l'EMA
         if d and abs(c - vwap) <= EXT * atr:
             R = max(PIPS * 0.1, K * atr)
             pos = dict(w=w, d=d, t=t, fill=i + 1, e0=c, e=c, R=R, st=c - d * R, hit=0, r=0.0, atr=atr); day_n += 1
