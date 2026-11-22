@@ -10,6 +10,7 @@
 | BE | SL remonté au prix d'entrée dès TP1 touché |
 | Risque | 25 $ par trade : taille = 25 $ / 5 $ = 5 onces (0,05 lot) |
 | Positions simultanées | 1 seule, jamais deux trades en même temps ; 5 trades max par nuit |
+| Arrêt de la nuit | **après le 1er SL, plus aucune entrée jusqu'à la nuit suivante** (ajouté le 22/11 : 3 mois +293 $ au lieu de +241 $ en 0,03 lot, drawdown 42 $ au lieu de 74 $, meilleur sur les deux moitiés) |
 
 Résultats (bougies Axi M5, comptage prudent, spread non compté ≈ −0,03R/trade) :
 septembre (hors échantillon) +12,1R sur 42 trades · 20/10–20/11 +5,3R sur 32 trades · total +17,4R, PF 1,65, drawdown max 4R.

@@ -1,13 +1,13 @@
 """Un passage du test papier de nuit (00h30–04h Paris) : rejoue la stratégie validée sur live/candles.txt,
 envoie sur Telegram les nouvelles cartes et les résultats, tient le journal. Aucun ordre n'est passé.
-Règle : SL 50 pips fixe, BE après TP1, TP 1R/2R/3R par tiers, filtre 3 ATR, une position à la fois, comptage prudent."""
+Règle : SL 50 pips fixe, BE après TP1, TP 1R/2R/3R par tiers, filtre 3 ATR, une position à la fois, arrêt de la nuit après 1 SL, comptage prudent."""
 import json, os, subprocess, sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 H = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(os.path.dirname(H))
 PAR = ZoneInfo('Europe/Paris'); STATE = os.path.join(H, 'live', 'state.json')
 out = subprocess.run([sys.executable, os.path.join(ROOT, 'grok-desk/backtests/month.py'), '--data', os.path.join(H, 'live'),
-                      '--window', 'nuit', '--prudent', '--pips', '50', '--k', '0', '--json'], capture_output=True, text=True, check=True).stdout
+                      '--window', 'nuit', '--prudent', '--pips', '50', '--k', '0', '--maxsl', '1', '--json'], capture_output=True, text=True, check=True).stdout
 snap = json.loads(next(l for l in out.splitlines() if l.startswith('JSON'))[4:])
 st = json.load(open(STATE)) if os.path.exists(STATE) else {'next_id': 100, 'trades': {}}
 DRY = '--dry' in sys.argv
