@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 H = os.path.dirname(os.path.abspath(__file__)); A = sys.argv
 def arg(n, d): return type(d)(A[A.index(n) + 1]) if n in A else d
 K = arg('--k', 1.5); PIPS = arg('--pips', 50.0); PRUDENT = '--prudent' in A; BE = '--nobe' not in A
-WIN = arg('--window', 'both'); BEAFTER = arg('--beafter', 1); BEOFF = arg('--beoff', 0.0); TPN = arg('--tpn', 3); MAXDAY = arg('--maxday', 5); MAXSL = arg('--maxsl', 99); TREND = arg('--trend', 0); CWIN = arg('--win', ''); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
+WIN = arg('--window', 'both'); BEAFTER = arg('--beafter', 1); BEOFF = arg('--beoff', 0.0); TPN = arg('--tpn', 3); MAXDAY = arg('--maxday', 5); MAXSL = arg('--maxsl', 99); TREND = arg('--trend', 0); CWIN = arg('--win', ''); PD = arg('--pd', 0); SWEEP = arg('--sweep', 0); SWLB = arg('--swlb', 48); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
 NY, PAR = ZoneInfo('America/New_York'), ZoneInfo('Europe/Paris')
 rows = {}
 for f in sorted(f for d in arg('--data', 'data').split(',') for f in glob.glob(os.path.join(H, d, '*.txt'))):
@@ -73,6 +73,13 @@ for i, (t, o, h, l, c) in enumerate(B):
         rs = tr / atr_prev
         d = 1 if (rs >= RANGE_MIN and c > vwap and c > o) else -1 if (rs >= RANGE_MIN and c < vwap and c < o) else 0
         if TREND and d and d * (c - ema) < 0: d = 0  # filtre de tendance : seulement dans le sens de l'EMA
+        if PD and d and i > PD:  # Premium / Discount (SMC) : achat seulement si la bougie part de la moitié basse du range des PD dernières bougies
+            hi = max(x[2] for x in B[i - PD:i]); lo = min(x[3] for x in B[i - PD:i]); mid = (hi + lo) / 2
+            if d * (o - mid) > 0: d = 0
+        if SWEEP and d and i > SWLB + SWEEP:  # prise de liquidité (SMC) : un plus bas (achat) / plus haut (vente) des SWLB bougies balayé dans les SWEEP dernières
+            ref = B[i - SWLB - SWEEP:i - SWEEP]
+            if d > 0 and not min(x[3] for x in B[i - SWEEP:i + 1]) < min(x[3] for x in ref): d = 0
+            if d < 0 and not max(x[2] for x in B[i - SWEEP:i + 1]) > max(x[2] for x in ref): d = 0
         if d and abs(c - vwap) <= EXT * atr:
             R = max(PIPS * 0.1, K * atr)
             pos = dict(w=w, d=d, t=t, fill=i + 1, e0=c, e=c, R=R, st=c - d * R, hit=0, r=0.0, atr=atr); day_n += 1

@@ -4,8 +4,13 @@ import json, subprocess, sys, os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 H = os.path.dirname(os.path.abspath(__file__)); PAR = ZoneInfo('Europe/Paris'); OZ = 3; SPREAD = 0.16
-BASE = ['--data', 'data_aug,data_sep,data', '--window', 'nuit', '--prudent', '--pips', '50', '--k', '0', '--json']
+BASE = ['--data', 'data_aug,data_sep,data', '--window', 'nuit', '--prudent', '--pips', '50', '--k', '0', '--maxsl', '1', '--json']
 V = [('Règle actuelle', []),
+     ('SMC Premium/Discount (range 4 h)', ['--pd', '48']),
+     ('SMC Premium/Discount (range 2 h)', ['--pd', '24']),
+     ('SMC prise de liquidité (30 min, réf. 4 h)', ['--sweep', '6']),
+     ('SMC prise de liquidité (1 h, réf. 4 h)', ['--sweep', '12']),
+     ('SMC Premium/Discount 4 h + prise de liquidité 1 h', ['--pd', '48', '--sweep', '12']),
      ('BE après TP2 (au lieu de TP1)', ['--beafter', '2']),
      ('BE 1 $ sous l\'entrée', ['--beoff', '1']),
      ('BE 2 $ sous l\'entrée', ['--beoff', '2']),
