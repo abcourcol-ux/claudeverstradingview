@@ -8,7 +8,7 @@ H = os.path.dirname(os.path.abspath(__file__)); A = sys.argv
 def arg(n, d): return type(d)(A[A.index(n) + 1]) if n in A else d
 LOT = arg('--lot', 0.03); OZ = LOT * 100; SPREAD = arg('--spread', 0.16); FROM = arg('--from', '2026-08-20'); TO = arg('--to', '2026-11-20'); MAXSL = arg('--maxsl', 1); CAP = arg('--capital', 0.0)
 PAR = ZoneInfo('Europe/Paris'); MOIS = ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
-out = subprocess.run([sys.executable, os.path.join(H, 'month.py'), '--data', 'data_aug,data_sep,data', '--window', 'nuit', '--prudent',
+out = subprocess.run([sys.executable, os.path.join(H, 'month.py'), '--data', arg('--data', 'data_mai,data_aug,data_sep,data'), '--window', 'nuit', '--prudent',
                       '--pips', '50', '--k', '0', '--maxsl', str(MAXSL), '--json'], capture_output=True, text=True, check=True).stdout
 snap = json.loads(next(l for l in out.splitlines() if l.startswith('JSON'))[4:])
 tr = [t for t in snap['trades'] if t['status'] == 'closed' and FROM <= datetime.fromisoformat(t['t']).astimezone(PAR).strftime('%Y-%m-%d') <= TO]
@@ -26,7 +26,7 @@ def line(name, ts):
 print(f"Règle de nuit 00h30–04h Paris · SL 50 pips · BE après TP1 · TP 1R/2R/3R · lot {LOT} ({OZ:g} oz) → 1R = {5*OZ:.0f} $ · spread {SPREAD} $ déduit · arrêt après {MAXSL} SL · comptage prudent" + (f" · capital {CAP:g} $" if CAP else ''))
 print(f"Période {FROM} → {TO} · {len(tr)} trades\n")
 print("| Mois | Trades | Gagnants | R | Résultat | PF | Drawdown max |\n|---|---|---|---|---|---|---|")
-for (y, m), ts in by.items(): print(line(f"{MOIS[m]} {y}" + (' (dès le 20)' if m == 8 else ' (au 20)' if m == 11 else ''), ts))
+for (y, m), ts in by.items(): print(line(f"{MOIS[m]} {y}" + (f' (dès le {int(FROM[8:])})' if (y, m) == (int(FROM[:4]), int(FROM[5:7])) and FROM[8:] != '01' else f' (au {int(TO[8:])})' if (y, m) == (int(TO[:4]), int(TO[5:7])) else ''), ts))
 print(line('**Total**', tr))
 if '--list' in A:
     for t in tr: print(f"{datetime.fromisoformat(t['t']).astimezone(PAR):%d/%m %H:%M}  {'ACHAT' if t['d']>0 else 'VENTE'}  {t['out']:22} {t['r']:+.2f}R  {usd(t):+7.2f} $")
