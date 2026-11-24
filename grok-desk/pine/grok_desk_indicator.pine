@@ -12,7 +12,7 @@ indicator("Grok Desk", overlay = true, max_lines_count = 50, max_labels_count = 
 
 // ── Paramètres (les lignes marquées « @desk » reçoivent les valeurs de la config de l'app) ──
 grpS = "🔎 Scanner"
-actSrc    = input.string("Auto", "Source d'activité", options = ["Auto", "Volume", "Amplitude"], tooltip = "Auto : volume s'il existe + amplitude. Amplitude : pour l'or/forex sans volume.", group = grpS)
+actSrc    = input.string("Amplitude", "Source d'activité", options = ["Auto", "Volume", "Amplitude"], tooltip = "Auto : volume s'il existe + amplitude. Amplitude : pour l'or/forex sans volume.", group = grpS)
 rvolDays  = input.int(5, "Jours de référence du volume relatif", minval = 1, maxval = 20, group = grpS)  // @desk RVOL_DAYS
 rvolMin   = input.float(2.0, "Volume relatif minimum", step = 0.1, group = grpS)  // @desk MIN_REL_VOLUME
 spikeMin  = input.float(3.0, "Pic de volume minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
@@ -76,7 +76,8 @@ if session.isfirstbar_regular
     nPx := 0
 sumPx += hlc3
 nPx += 1
-vwap = hasVolume and not na(vw) ? vw : sumPx / nPx
+vwapMode = input.string("Moyenne", "VWAP de séance", options = ["Moyenne", "Volume"], tooltip = "Moyenne = moyenne simple des prix (identique au test papier sur Axi, validée) ; Volume = VWAP pondéré par le volume de ticks.")
+vwap = vwapMode == "Volume" and hasVolume and not na(vw) ? vw : sumPx / nPx
 
 volUnusual   = useVolume and ((not na(rvol) and rvol >= rvolMin) or (not na(spike) and spike >= spikeMin))
 rangeUnusual = useRange and not na(rangeSpike) and rangeSpike >= rangeMin

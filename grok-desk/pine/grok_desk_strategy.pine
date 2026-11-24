@@ -8,7 +8,7 @@
 strategy("Grok Desk Strategy", overlay = true, initial_capital = 25000, currency = currency.USD, pyramiding = 0, commission_type = strategy.commission.cash_per_order, commission_value = 1.0, slippage = 2, margin_long = 20, margin_short = 20)  // @desk CAPITAL
 
 grpS = "🔎 Scanner"
-actSrc    = input.string("Auto", "Source d'activité", options = ["Auto", "Volume", "Amplitude"], tooltip = "Auto : volume s'il existe + amplitude. Amplitude : pour l'or/forex sans volume.", group = grpS)
+actSrc    = input.string("Amplitude", "Source d'activité", options = ["Auto", "Volume", "Amplitude"], tooltip = "Auto : volume s'il existe + amplitude. Amplitude : pour l'or/forex sans volume.", group = grpS)
 rvolDays  = input.int(5, "Jours de référence du volume relatif", minval = 1, maxval = 20, group = grpS)  // @desk RVOL_DAYS
 rvolMin   = input.float(2.0, "Volume relatif minimum", step = 0.1, group = grpS)  // @desk MIN_REL_VOLUME
 spikeMin  = input.float(3.0, "Pic de volume minimum (× moyenne 20)", step = 0.1, group = grpS)  // @desk MIN_BAR_SPIKE
@@ -31,6 +31,7 @@ noFirst   = input.int(15, "Pas d'entrée les N premières minutes", group = grpR
 noLast    = input.int(45, "Pas d'entrée les N dernières minutes", group = grpR)  // @desk NO_ENTRY_LAST_MIN
 flatMin   = input.int(5, "Tout fermer N minutes avant la fin de la fenêtre", group = grpR)  // @desk FLATTEN_MIN
 maxTrades = input.int(5, "Trades max par jour", group = grpR)  // @desk MAX_TRADES_PER_DAY
+maxSL     = input.int(1, "Arrêt de la journée après N SL (0 = désactivé)", minval = 0, group = grpR)
 dayLossPc = input.float(2.0, "Perte journalière max (% du capital)", step = 0.1, group = grpR)  // @desk DAILY_LOSS_LIMIT_PCT
 grpK = "😈 Sceptique"
 maxExtAtr = input.float(3.0, "Refuser si prix > N × ATR du VWAP", step = 0.1, group = grpK)  // @desk MAX_EXT_ATR
@@ -81,7 +82,8 @@ if session.isfirstbar_regular
     nPx := 0
 sumPx += hlc3
 nPx += 1
-vwap = hasVolume and not na(vw) ? vw : sumPx / nPx
+vwapMode = input.string("Moyenne", "VWAP de séance", options = ["Moyenne", "Volume"], tooltip = "Moyenne = moyenne simple des prix (identique au test papier sur Axi, validée) ; Volume = VWAP pondéré par le volume de ticks.")
+vwap = vwapMode == "Volume" and hasVolume and not na(vw) ? vw : sumPx / nPx
 
 volUnusual   = useVolume and ((not na(rvol) and rvol >= rvolMin) or (not na(spike) and spike >= spikeMin))
 rangeUnusual = useRange and not na(rangeSpike) and rangeSpike >= rangeMin
@@ -99,8 +101,19 @@ minToClose   = (winEnd - time_close) / 60000.0
 timeOk = inWin and session.ismarket and timeframe.isintraday and minSinceOpen >= noFirst and minToClose >= noLast and (not useFrom or time >= fromDate)
 
 var int tradesToday = 0
+var int slToday = 0
+var float npEntry = 0.0
+var float riskCash = 0.0
 if session.isfirstbar_regular
     tradesToday := 0
+    slToday := 0
+
+// Arrêt après N SL (vérifié avant tout nouveau signal) : une sortie qui coûte au moins la moitié du risque compte comme un SL
+var int lastClosed = 0
+if strategy.closedtrades > lastClosed and strategy.position_size == 0
+    if strategy.netprofit - npEntry < -0.5 * riskCash
+        slToday += 1
+    lastClosed := strategy.closedtrades
 
 dir = unusual and close > vwap and close > open ? 1 : allowShort and unusual and close < vwap and close < open ? -1 : 0
 entryPx = close
@@ -114,7 +127,7 @@ extended = math.abs(close - vwap) > maxExtAtr * atr
 qtyRisk = riskPS > 0 ? strategy.equity * riskPct / 100 / riskPS : 0.0
 qtyCap  = strategy.equity * maxPosPct / 100 / entryPx
 qty     = math.floor(math.min(qtyRisk, qtyCap) / qtyStep) * qtyStep
-signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= qtyStep and strategy.position_size == 0
+signal = dir != 0 and rr >= minRR and stopPc <= maxStopPc and timeOk and tradesToday < maxTrades and not extended and qty >= qtyStep and strategy.position_size == 0 and (maxSL == 0 or slToday < maxSL)
 
 var float trEntry = na
 var float trRisk = na
@@ -127,6 +140,8 @@ q1 = math.floor(qty / 3 / qtyStep) * qtyStep
 useThirds = thirds and q1 >= qtyStep
 if signal
     tradesToday += 1
+    npEntry := strategy.netprofit
+    riskCash := qty * riskDist
     trEntry := entryPx
     trRisk := riskDist
     trDir := dir
