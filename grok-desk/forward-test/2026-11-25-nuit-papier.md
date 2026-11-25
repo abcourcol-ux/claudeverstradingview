@@ -4,3 +4,4 @@ Règle validée (sept.–nov.) : SL 50 pips fixe, BE après TP1, TP 1R/2R/3R par
 
 | # | Signal (Paris) | Sens | Entrée | SL | TP1 | TP2 | TP final | Statut |
 |---|---|---|---|---|---|---|---|---|
+| #102 | 25/11 01:15 | VENTE | 3542.36 | 3547.36 | 3537.36 | 3532.36 | 3527.36 | carte envoyée |
