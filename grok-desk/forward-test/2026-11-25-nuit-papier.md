@@ -6,3 +6,5 @@ Règle validée (sept.–nov.) : SL 50 pips fixe, BE après TP1, TP 1R/2R/3R par
 |---|---|---|---|---|---|---|---|---|
 | #102 | 25/11 01:15 | VENTE | 3542.36 | 3547.36 | 3537.36 | 3532.36 | 3527.36 | carte envoyée |
 | #102 | | | | | | | | **SL : -0.99R** |
+
+**Bilan de la nuit** : 1 trade, #102 VENTE −0,99R (SL touché sur la bougie de 01h30, après un plus bas à 3539,59 ; TP1 3537,36 manqué de 2,23 $). Arrêt après 1 SL. Cumul du test papier : 3 trades, 2 gagnants, +2,97R.
