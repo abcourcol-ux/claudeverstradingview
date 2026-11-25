@@ -1,0 +1,4 @@
+# copieur de signaux : session Telegram = accès à ton compte, ne jamais committer
+copier/*.session
+copier/*.session-journal
+copier/signals.jsonl

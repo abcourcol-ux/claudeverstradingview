@@ -5,7 +5,7 @@
 //         NODE_USE_ENV_PROXY=1 node grok-desk/src/tg-inbox.js --watch 120  → écoute en continu pendant 120 min (réaction immédiate)
 // SL, BE ou TP final = trade terminé → les boutons disparaissent et le message indique la clôture.
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { loadEnvFile } from './config.js';
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
@@ -31,6 +31,14 @@ async function poll(timeout) {
   if (!res.ok) throw new Error(`Telegram : ${res.description}`);
   for (const u of res.result) {
     state.offset = u.update_id + 1;
+    const msg = u.message;
+    if (msg && String(msg.chat?.id) === chat && String(msg.text || '').startsWith('/sig ')) {
+      // signal du groupe Telegram relayé par copier/listen.py (mode papier) → copier/inbox.jsonl
+      mkdirSync(here('../copier'), { recursive: true });
+      appendFileSync(here('../copier/inbox.jsonl'), msg.text.slice(5).trim() + '\n');
+      fresh.push({ signal: msg.text.slice(5, 120) });
+      continue;
+    }
     const q = u.callback_query;
     if (!q) continue;
     if (String(q.message?.chat?.id) !== chat) { await api('answerCallbackQuery', { callback_query_id: q.id, text: 'Non autorisé' }); continue; }
