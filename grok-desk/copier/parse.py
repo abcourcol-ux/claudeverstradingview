@@ -17,9 +17,10 @@ def _num(s):
 
 
 def _symbol(t):
-    m = re.search(r'\b([A-Z]{6})\b', t)
-    if m and m.group(1) not in ('ACHETE', 'VENDRE'):
-        return m.group(1)
+    for m in re.finditer(r'\b([A-Z]{6})\b', t):
+        w = m.group(1)
+        if w in SYMBOLS: return SYMBOLS[w]
+        if w not in ('ACHETE', 'VENDRE', 'MOMENT', 'TRADES', 'SIGNAL'): return w
     for k, v in SYMBOLS.items():
         if re.search(rf'\b{k}\b', t):
             return v
