@@ -8,6 +8,7 @@ H = os.path.dirname(os.path.abspath(__file__)); A = sys.argv
 def arg(n, d): return type(d)(A[A.index(n) + 1]) if n in A else d
 K = arg('--k', 1.5); PIPS = arg('--pips', 50.0); PRUDENT = '--prudent' in A; BE = '--nobe' not in A
 WIN = arg('--window', 'both'); BEAFTER = arg('--beafter', 1); BEOFF = arg('--beoff', 0.0); TPN = arg('--tpn', 3); MAXDAY = arg('--maxday', 5); MAXSL = arg('--maxsl', 99); TREND = arg('--trend', 0); CWIN = arg('--win', ''); PD = arg('--pd', 0); SWEEP = arg('--sweep', 0); SWLB = arg('--swlb', 48); RANGE_MIN = arg('--range', 2.0); EXT = arg('--ext', 3.0)
+PULL = arg('--pull', 0.0); PULLV = '--pullvwap' in A; PULLN = arg('--pulln', 6); BER = arg('--ber', 0.0)  # entrée limite sur repli (en R ou au VWAP), valable PULLN bougies ; BE dès +BER R
 NY, PAR = ZoneInfo('America/New_York'), ZoneInfo('Europe/Paris')
 rows = {}
 for f in sorted(f for d in arg('--data', 'data').split(',') for f in glob.glob(os.path.join(H, d, '*.txt'))):
@@ -42,6 +43,17 @@ for i, (t, o, h, l, c) in enumerate(B):
     sumpx += (h + l + c) / 3; npx += 1; vwap = sumpx / npx
     w, since, toclose = window_of(t)
     # gestion de la position ouverte
+    if pos and pos.get('pend'):  # ordre limite en attente (variante entrée sur repli)
+        if i > pos['exp'] or w != pos['w'] or toclose <= 5:
+            pos = None
+        else:
+            d = pos['d']; lim = pos['lim']
+            if (d < 0 and h >= lim) or (d > 0 and l <= lim):
+                pos.update(pend=False, e0=lim, e=lim, st=lim - d * pos['R'], fill=i, tfill=t); day_n += 1
+                adverse = h if d < 0 else l
+                if d * (pos['st'] - adverse) >= 0:  # prudent : SL touché dans la bougie d'entrée
+                    pos['r'] = -1.0; pos['out'] = 'SL (bougie d entrée)'; pos['t1'] = t; day_r -= 1; day_sl += 1; trades.append(pos); pos = None
+            prev = (t, o, h, l, c); continue
     if pos and i >= pos['fill']:
         if i == pos['fill']: pos['e'] = o; pos['tfill'] = t
         d = pos['d']
@@ -51,11 +63,16 @@ for i, (t, o, h, l, c) in enumerate(B):
             while not done:
                 lo, hi = min(a, z), max(a, z); ev = []
                 if lo <= pos['st'] <= hi: ev.append((abs(pos['st'] - a), 'sl', pos['st']))
+                if BER and not pos.get('bed') and pos['hit'] == 0:
+                    lv = pos['e0'] + d * BER * pos['R']
+                    if lo <= lv <= hi: ev.append((abs(lv - a), 'be', lv))
                 if pos['hit'] < TPN:
                     tp = pos['e0'] + d * (pos['hit'] + 1) * pos['R']
                     if lo <= tp <= hi: ev.append((abs(tp - a), 'tp', tp))
                 if not ev: break
                 ev.sort(); _, k, p = ev[0]
+                if k == 'be':
+                    pos['bed'] = True; pos['st'] = pos['e0']; a = p; continue
                 if k == 'sl':
                     pos['r'] += (TPN - pos['hit']) / TPN * d * (p - pos['e']) / pos['R']; done = 'SL' if pos['hit'] == 0 else ('BE' if BE else 'SL') + f" après TP{pos['hit']}"
                 else:
@@ -82,7 +99,11 @@ for i, (t, o, h, l, c) in enumerate(B):
             if d < 0 and not max(x[2] for x in B[i - SWEEP:i + 1]) > max(x[2] for x in ref): d = 0
         if d and abs(c - vwap) <= EXT * atr:
             R = max(PIPS * 0.1, K * atr)
-            pos = dict(w=w, d=d, t=t, fill=i + 1, e0=c, e=c, R=R, st=c - d * R, hit=0, r=0.0, atr=atr); day_n += 1
+            if PULL or PULLV:
+                lim = vwap if PULLV else c - d * PULL * R
+                pos = dict(w=w, d=d, t=t, fill=i + 1, e0=lim, e=lim, R=R, st=lim - d * R, hit=0, r=0.0, atr=atr, pend=True, lim=lim, exp=i + PULLN)
+            else:
+                pos = dict(w=w, d=d, t=t, fill=i + 1, e0=c, e=c, R=R, st=c - d * R, hit=0, r=0.0, atr=atr); day_n += 1
     prev = (t, o, h, l, c)
 # slippage d'entrée : l'entrée réelle est l'ouverture suivante, niveaux fixés au signal (comme Pine)
 tot = sum(x['r'] for x in trades); win = [x for x in trades if x['r'] > 0.01]; loss = [x for x in trades if x['r'] < -0.01]
