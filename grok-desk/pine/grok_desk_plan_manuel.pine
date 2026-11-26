@@ -1,5 +1,6 @@
 // This source code is subject to the terms of the MIT License.
-// Grok Desk — Plan manuel : à l'ajout, clique sur le graphique au point d'entrée (heure + prix) ; ensuite le point se déplace à la souris.
+// Grok Desk — Plan manuel : à l'ajout, 2 clics : 1) le point d'entrée (bougie + prix), 2) le niveau du SL.
+// Ensuite, indicateur sélectionné, l'entrée et le SL se déplacent à la souris : boîte, TP, BE et lot suivent.
 // Même dessin que « Grok Desk — Plan de trade » : dessine le plan d'un trade (zone gain jusqu'au TP3, zone risque jusqu'au SL,
 // lignes TP1 / TP2 / BE / ENTRÉE / SL, ✓ quand un niveau est touché) et calcule le lot pour ton compte.
 //   Si tu saisis le prix du SL, le sens (long / short) est déduit tout seul : SL sous l'entrée = long.
@@ -12,8 +13,8 @@ grpM = "📐 Plan"
 src    = "Manuel"
 mDir   = input.string("Long", "Sens (si SL en pips)", options = ["Long", "Short"], group = grpM)
 mTime  = input.time(timestamp("2026-01-01T00:00:00"), "Entrée : heure", inline = "pt", confirm = true, group = grpM)
-mEntry = input.price(0.0, "prix", inline = "pt", confirm = true, group = grpM)
-slPx  = input.float(0.0, "SL (prix ; 0 = SL en pips ci-dessous)", group = grpM)
+mEntry = input.price(0.0, "", inline = "pt", confirm = true, group = grpM)
+slPx  = input.price(0.0, "SL (clic sur le graphique)", confirm = true, group = grpM)
 tp1Px = input.float(0.0, "TP1 (prix ; 0 = en R)", group = grpM)
 tp2Px = input.float(0.0, "TP2 (prix ; 0 = en R)", group = grpM)
 tp3Px = input.float(0.0, "TP3 (prix ; 0 = en R)", group = grpM)
