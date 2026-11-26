@@ -5,7 +5,7 @@ Aucun ordre Axi : lecture seule. Depuis la racine du repo.
 1. Écouteur Telegram : `pgrep -f "tg-inbox.js --watch"` ; sinon `(NODE_USE_ENV_PROXY=1 NODE_NO_WARNINGS=1 nohup node grok-desk/src/tg-inbox.js --watch 240 > grok-desk/data/tg-watch.log 2>&1 &)`.
 2. Bougies M5 : `get_mt5_candles` (compte us50-demo_10072219, XAUUSD, M5) depuis J-12 00:00Z jusqu'à maintenant (la réponse est sauvegardée en fichier), puis
    `python3 -I grok-desk/forward-test/ingest.py < fichier` et `NODE_USE_ENV_PROXY=1 python3 grok-desk/forward-test/night_pass.py`.
-3. Pré-alerte (seulement entre 00h45 et 03h15 Paris, sans position ouverte) : `get_mt5_candles` M1 sur les 24 dernières heures (fichier), puis
+3. Pré-alerte (passages « clôture + 3 min » uniquement, entre 00h45 et 03h15 Paris, sans position ouverte ; les passages « clôture + 1 min » font seulement l'étape 2, et les passages « + 3 min » seulement l'étape 3) : `get_mt5_candles` M1 sur les 24 dernières heures (fichier), puis
    `python3 -I grok-desk/forward-test/prealert.py fichier`.
 4. `git add grok-desk/forward-test && git commit && git push` (jamais grok-desk/.env).
 5. Prochain passage (send_later, même consigne « suivre grok-desk/forward-test/PASSAGE.md ») :
