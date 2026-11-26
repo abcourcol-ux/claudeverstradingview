@@ -1,0 +1,168 @@
+// This source code is subject to the terms of the MIT License.
+// Grok Desk — Plan de trade : dessine le plan d'un trade (zone gain jusqu'au TP3, zone risque jusqu'au SL,
+// lignes TP1 / TP2 / BE / ENTRÉE / SL, ✓ quand un niveau est touché) et calcule le lot pour ton compte.
+//   Source « Signal Grok Desk (auto) » : se place tout seul sur le dernier signal de la règle de nuit validée
+//     (00h30–04h Paris, bougie ≥ 2 ATR du bon côté du VWAP de séance, refus si > 3 ATR, arrêt après 1 SL).
+//   Source « Manuel » : n'importe quel trade (ex. un signal Telegram) : sens, prix et heure d'entrée.
+// Graphique 5 min conseillé. Aucun ordre n'est passé : c'est un outil visuel.
+//@version=6
+indicator("Grok Desk — Plan de trade", "GD Plan", overlay = true, max_boxes_count = 20, max_lines_count = 60, max_labels_count = 60)
+
+grpM = "📐 Plan"
+src    = input.string("Signal Grok Desk (auto)", "Source du plan", options = ["Signal Grok Desk (auto)", "Manuel"], group = grpM)
+mDir   = input.string("Long", "Sens (manuel)", options = ["Long", "Short"], group = grpM)
+mEntry = input.price(0.0, "Prix d'entrée (manuel)", group = grpM)
+mTime  = input.time(timestamp("2026-01-01T00:00:00"), "Heure d'entrée (manuel)", group = grpM)
+slPips = input.float(50, "SL (pips)", minval = 1, group = grpM)
+pip    = input.float(0.1, "Valeur d'un pip (or : 0.1 · argent : 0.01)", step = 0.01, group = grpM)
+tp1R   = input.float(1.0, "TP1 (en R)", step = 0.1, group = grpM)
+tp2R   = input.float(2.0, "TP2 (en R)", step = 0.1, group = grpM)
+tp3R   = input.float(3.0, "TP3 (en R)", step = 0.1, group = grpM)
+beR    = input.float(1.0, "SL au BE à partir de (en R)", step = 0.1, tooltip = "Règle Grok Desk validée : 1 = au TP1. Mettre 0.5 pour un BE plus tôt.", group = grpM)
+widthB = input.int(40, "Largeur du dessin (bougies)", minval = 5, group = grpM)
+
+grpS = "🔎 Signal auto (règle validée)"
+sess     = input.session("0030-0400", "Fenêtre (heure de Paris)", group = grpS)
+rangeMin = input.float(2.0, "Amplitude minimum (× ATR)", step = 0.1, group = grpS)
+extMax   = input.float(3.0, "Refuser si prix > N × ATR du VWAP", step = 0.1, group = grpS)
+
+grpL = "💰 Taille de position"
+cap    = input.float(44000, "Capital actuel ($)", group = grpL)
+riskPc = input.float(0.25, "Risque par trade (%)", step = 0.05, group = grpL)
+floorC = input.float(43000, "Plancher du compte ($ ; 0 = aucun)", group = grpL)
+ozLot  = input.float(100, "Unités par lot (or : 100 · argent : 5000)", group = grpL)
+
+// ── Signal de la règle de nuit (mêmes calculs que « Grok Desk ») ──
+atr = ta.atr(14)
+rangeSpike = ta.tr(true) / atr[1]
+var float sumPx = 0.0
+var int nPx = 0
+if session.isfirstbar_regular
+    sumPx := 0.0
+    nPx := 0
+sumPx += hlc3
+nPx += 1
+vwap = sumPx / nPx
+
+tzP = "Europe/Paris"
+inWin  = not na(time(timeframe.period, sess, tzP))
+startM = int(str.tonumber(str.substring(sess, 0, 2))) * 60 + int(str.tonumber(str.substring(sess, 2, 4)))
+endM   = int(str.tonumber(str.substring(sess, 5, 7))) * 60 + int(str.tonumber(str.substring(sess, 7, 9)))
+pm     = hour(time, tzP) * 60 + minute(time, tzP)
+timeOk = inWin and timeframe.isintraday and pm - startM >= 15 and (endM - pm) - 5 >= 45
+dirSig = rangeSpike >= rangeMin and close > vwap and close > open ? 1 : rangeSpike >= rangeMin and close < vwap and close < open ? -1 : 0
+sig    = timeOk and dirSig != 0 and math.abs(close - vwap) <= extMax * atr
+
+// ── État du plan ──
+R = slPips * pip
+var int pDir = 0
+var float pE = na
+var int pStart = na
+var bool active = false
+var int hit = 0
+var bool beOn = false
+var float pStop = na
+var string outcome = ""
+var int slToday = 0
+if session.isfirstbar_regular
+    slToday := 0
+
+auto = src == "Signal Grok Desk (auto)"
+if auto and sig and not active and slToday == 0
+    pDir := dirSig
+    pE := close
+    pStart := bar_index + 1
+    active := true
+    hit := 0
+    beOn := false
+    pStop := close - dirSig * R
+    outcome := ""
+if not auto and mEntry > 0 and time >= mTime and (na(time[1]) or time[1] < mTime)
+    pDir := mDir == "Long" ? 1 : -1
+    pE := mEntry
+    pStart := bar_index
+    active := true
+    hit := 0
+    beOn := false
+    pStop := mEntry - pDir * R
+    outcome := ""
+
+if active and bar_index >= pStart
+    adverse = pDir == 1 ? low <= pStop : high >= pStop
+    if adverse                                    // comptage prudent : le stop passe avant les objectifs dans une même bougie
+        active := false
+        outcome := hit == 0 and not beOn ? "SL" : hit > 0 ? "stop au BE après TP" + str.tostring(hit) : "stop au BE"
+        if not beOn
+            slToday += 1
+    else
+        fav = pDir == 1 ? high : low
+        prog = (fav - pE) * pDir / R
+        if not beOn and prog >= beR
+            beOn := true
+            pStop := pE
+        hit := math.max(hit, prog >= tp3R ? 3 : prog >= tp2R ? 2 : prog >= tp1R ? 1 : 0)
+        if hit == 3
+            active := false
+            outcome := "TP3 ✓"
+    if active and auto and (not inWin or (endM - pm) <= 5)
+        active := false
+        outcome := "fermé à la fin de fenêtre (" + str.tostring(hit) + " TP)"
+
+// ── Dessin du dernier plan ──
+var array<box> boxes = array.new<box>()
+var array<line> lines = array.new<line>()
+var array<label> labels = array.new<label>()
+lvl(x1, x2, y, txt, col, sty) =>
+    lines.push(line.new(x1, y, x2, y, color = col, width = 1, style = sty))
+    labels.push(label.new(int((x1 + x2) / 2), y, txt, style = label.style_none, textcolor = col, size = size.small))
+
+ok(b) => b ? " ✓" : ""
+
+if barstate.islast and not na(pE)
+    for b in boxes
+        b.delete()
+    for l in lines
+        l.delete()
+    for l in labels
+        l.delete()
+    boxes.clear()
+    lines.clear()
+    labels.clear()
+    x1 = pStart
+    x2 = pStart + widthB
+    tp1 = pE + pDir * tp1R * R
+    tp2 = pE + pDir * tp2R * R
+    tp3 = pE + pDir * tp3R * R
+    be  = pE + pDir * beR * R
+    sl  = pE - pDir * R
+    boxes.push(box.new(x1, math.max(pE, tp3), x2, math.min(pE, tp3), border_color = color.new(color.teal, 60), bgcolor = color.new(color.teal, 80)))
+    boxes.push(box.new(x1, math.max(pE, sl), x2, math.min(pE, sl), border_color = color.new(color.red, 60), bgcolor = color.new(color.red, 80)))
+    gr = color.new(#1b5e20, 0)
+    lvl(x1, x2, tp3, "TP3" + ok(hit >= 3) + "  " + str.tostring(tp3, format.mintick), gr, line.style_dashed)
+    lvl(x1, x2, tp2, "TP2" + ok(hit >= 2) + "  " + str.tostring(tp2, format.mintick), gr, line.style_solid)
+    lvl(x1, x2, tp1, "TP1" + ok(hit >= 1) + (beR == tp1R ? " · BE" : "") + "  " + str.tostring(tp1, format.mintick), gr, line.style_solid)
+    if beR != tp1R and beR > 0
+        lvl(x1, x2, be, "BE" + ok(beOn) + "  " + str.tostring(be, format.mintick), gr, line.style_solid)
+    lvl(x1, x2, pE, "ENTRÉE " + (pDir == 1 ? "▲" : "▼") + "  " + str.tostring(pE, format.mintick), color.black, line.style_dotted)
+    lvl(x1, x2, sl, "SL  " + str.tostring(sl, format.mintick), color.new(#b71c1c, 0), line.style_solid)
+    if outcome != ""
+        labels.push(label.new(x2, pDir == 1 ? tp3 : sl, outcome, style = label.style_label_left, color = color.new(color.gray, 20), textcolor = color.white, size = size.small))
+
+// ── Taille de position (lot divisible en 3 tiers) ──
+lotRaw   = cap * riskPc / 100 / (R * ozLot)
+lotTP    = math.floor(lotRaw / 3 / 0.01) * 0.01
+lotTot   = lotTP * 3
+riskCash = lotTot * R * ozLot
+marge    = floorC > 0 and riskCash > 0 ? (cap - floorC) / riskCash : na
+var table t = table.new(position.bottom_right, 2, 5, bgcolor = color.new(color.black, 15), border_width = 1)
+if barstate.islast
+    t.cell(0, 0, "Lot par TP", text_color = color.silver, text_size = size.small)
+    t.cell(1, 0, lotTP > 0 ? str.tostring(lotTP, "#.##") : "trop petit", text_color = color.white, text_size = size.small)
+    t.cell(0, 1, "Lot total (3 tiers)", text_color = color.silver, text_size = size.small)
+    t.cell(1, 1, str.tostring(lotTot, "#.##"), text_color = color.white, text_size = size.small)
+    t.cell(0, 2, "Perte si SL", text_color = color.silver, text_size = size.small)
+    t.cell(1, 2, str.tostring(riskCash, "#") + " $ (" + str.tostring(riskCash / cap * 100, "#.##") + " %)", text_color = color.orange, text_size = size.small)
+    t.cell(0, 3, "SL possibles avant plancher", text_color = color.silver, text_size = size.small)
+    t.cell(1, 3, na(marge) ? "—" : str.tostring(marge, "#.#"), text_color = na(marge) or marge >= 6 ? color.lime : color.red, text_size = size.small)
+    t.cell(0, 4, "Gain si TP1+TP2+TP3", text_color = color.silver, text_size = size.small)
+    t.cell(1, 4, str.tostring(lotTP * R * ozLot * (tp1R + tp2R + tp3R), "#") + " $", text_color = color.lime, text_size = size.small)
