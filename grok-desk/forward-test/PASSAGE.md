@@ -9,7 +9,7 @@ Aucun ordre Axi : lecture seule. Depuis la racine du repo.
    `python3 -I grok-desk/forward-test/prealert.py fichier`.
 4. `git add grok-desk/forward-test && git commit && git push` (jamais grok-desk/.env).
 5. Prochain passage (send_later, même consigne « suivre grok-desk/forward-test/PASSAGE.md ») :
-   - position ouverte → dans 2 min ;
+   - position ouverte → à chaque clôture de bougie + 1 min (les bougies M5 ne changent pas plus souvent) ;
    - entre 00h40 et 03h15 Paris sans position → au prochain de ces instants : clôture de bougie + 1 min (xx:x1, xx:x6) ou + 3 min (xx:x3, xx:x8) ;
    - avant 00h40 → dans 10 min ;
    - SL touché (nuit arrêtée) ou après 03h15 sans position → bilan à 04h06 Paris.
