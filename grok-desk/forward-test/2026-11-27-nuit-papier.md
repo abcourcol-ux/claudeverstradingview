@@ -6,3 +6,5 @@ Règle validée (sept.–nov.) : SL 50 pips fixe, BE après TP1, TP 1R/2R/3R par
 |---|---|---|---|---|---|---|---|---|
 | #103 | 27/11 01:00 | ACHAT | 3572.16 | 3567.16 | 3577.16 | 3582.16 | 3587.16 | carte envoyée |
 | #103 | | | | | | | | **SL : -1.00R** |
+
+**Bilan de la nuit** : pré-alerte ACHAT à 01h03 (bougie 01h00 à 2,46 ATR), confirmée à 01h07. #103 ACHAT 3572,16 → SL 3567,16 sur la bougie de 01h10 (plus haut après l'entrée 3572,58) : −1,00R. Arrêt après 1 SL. Cumul : 4 trades, 2 gagnants, +1,97R.
